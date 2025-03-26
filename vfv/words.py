@@ -36,12 +36,12 @@ class ImageAlgorithms:
         """
         return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    def _convert_to_rgb(self, image: np.ndarray) -> np.ndarray:
+    def _convert_gray_to_rgb(self, image: np.ndarray) -> np.ndarray:
         """
-        Converts the image to RGB.
+        Converts a grayscale image to RGB.
 
         Args:
-            image (numpy.ndarray): The image to convert.
+            image (numpy.ndarray): The grayscale image to convert.
 
         Returns:
             numpy.ndarray: The RGB image.
@@ -108,7 +108,7 @@ class ImageAlgorithms:
             gray_image = image.copy()
         
         # Threshold to binary (text as black)
-        _, binary = self._convert_to_binary(gray_image)
+        binary = self._convert_to_binary(gray_image)
                
         # Calculate distance transform
         dist = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
@@ -118,7 +118,7 @@ class ImageAlgorithms:
         smudged[dist <= distance_threshold] = 0
         
         # Convert back to RGB to match input format
-        return self._convert_to_rgb(smudged)
+        return self._convert_gray_to_rgb(smudged)
 
     def _fade(self, image: np.ndarray, distance_threshold: float = 1.5) -> np.ndarray:
         """
@@ -141,18 +141,11 @@ class ImageAlgorithms:
         # Invert the image
         inverted_image = cv2.bitwise_not(gray_image)
 
-                # Threshold to binary (text as black)
-        _, binary = self._convert_to_binary(inverted_image)
-               
-        # Calculate distance transform
-        dist = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
-        
-        # Create output binary image (black text on white background)
-        faded = np.ones_like(binary) * 255
-        faded[dist <= distance_threshold] = 0
+        # Apply the fade
+        faded = self._smudge(inverted_image, distance_threshold)
         
         # Convert back to RGB to match input format
-        return self._convert_to_rgb(faded)
+        return self._convert_gray_to_rgb(faded)
 
     def _remove_specks(self, image: np.ndarray, min_size: int = 30) -> np.ndarray:
         """
@@ -168,7 +161,7 @@ class ImageAlgorithms:
             gray_image = image.copy()
         
         # Make sure it's binary (0 for text, 255 for background)
-        _, binary = self._convert_to_binary(gray_image)
+        binary = self._convert_to_binary(gray_image)
         
         # Find connected components (black regions)
         # The 4 indicates 4-connectivity (only consider adjacent pixels, not diagonals)
@@ -187,8 +180,7 @@ class ImageAlgorithms:
                 output[labels == i] = 0
         
         # Convert back to RGB
-        return self._convert_to_rgb(output)
-
+        return self._convert_gray_to_rgb(output)
 
 
 class WordImage(ImageAlgorithms):
@@ -331,7 +323,7 @@ class WordImageExtractor(WordImage):
 
         # Apply binary thresholding to clean up fuzzy edges
         # You can adjust the threshold value (127) as needed
-        _, binary = self._convert_to_binary(cropped_img)
+        binary = self._convert_to_binary(cropped_img)
 
         self.set_image(binary)
 
@@ -497,16 +489,16 @@ class WordScorer(ImageAlgorithms):
 
         self.projection_bin_width = projection_bin_width
 
-        self.extracted_projection_histogram = self.compute_projection_histogram(self.extracted_image)
-        self.rendered_projection_histogram = self.compute_projection_histogram(self.rendered_image)
+        self.extracted_projection_histogram = self._compute_projection_histogram(self.extracted_image)
+        self.rendered_projection_histogram = self._compute_projection_histogram(self.rendered_image)
 
-        self.extracted_hu_moments = self.compute_hu_moments(self.extracted_image)
-        self.rendered_hu_moments = self.compute_hu_moments(self.rendered_image)
+        self.extracted_hu_moments = self._compute_hu_moments(self.extracted_image)
+        self.rendered_hu_moments = self._compute_hu_moments(self.rendered_image)
+        self.hu_distance = self._compute_cosine_distance(self.extracted_hu_moments, self.rendered_hu_moments)
 
-        self.projection_distance_height = self.compute_wasserstein_distance(self.extracted_projection_histogram[0], self.rendered_projection_histogram[0])
-        self.projection_distance_width = self.compute_wasserstein_distance(self.extracted_projection_histogram[1], self.rendered_projection_histogram[1])
+        self.projection_distance_height = self._compute_wasserstein_distance(self.extracted_projection_histogram[0], self.rendered_projection_histogram[0])
+        self.projection_distance_width = self._compute_wasserstein_distance(self.extracted_projection_histogram[1], self.rendered_projection_histogram[1])
 
-        self.hu_distance = self.compute_cosine_distance(self.extracted_hu_moments, self.rendered_hu_moments)
 
     def hausdorff_distance(self, mode: str = 'all') -> float:
         """
@@ -562,7 +554,7 @@ class WordScorer(ImageAlgorithms):
         
         return intersection / union
 
-    def compute_projection_histogram(self, image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def _compute_projection_histogram(self, image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
         Computes normalized vertical and horizontal projection histograms by summing pixel intensities
         using a fixed bin width.
@@ -606,7 +598,7 @@ class WordScorer(ImageAlgorithms):
         
         return vertical_hist, horizontal_hist
 
-    def compute_hu_moments(self, image: np.ndarray) -> np.ndarray:
+    def _compute_hu_moments(self, image: np.ndarray) -> np.ndarray:
         """
         Computes Hu Moments for the input image.
         
@@ -633,7 +625,7 @@ class WordScorer(ImageAlgorithms):
 
         return hu_moments
 
-    def compute_wasserstein_distance(self, hist1: np.ndarray, hist2: np.ndarray) -> float:
+    def _compute_wasserstein_distance(self, hist1: np.ndarray, hist2: np.ndarray) -> float:
         """
         Computes the Wasserstein distance between two 1D histograms.
         
@@ -651,7 +643,7 @@ class WordScorer(ImageAlgorithms):
         distance = wasserstein_distance(bins, bins, u_weights=hist1, v_weights=hist2)
         return distance
 
-    def compute_cosine_distance(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
+    def _compute_cosine_distance(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         """
         Computes the cosine distance between two vectors after L2 normalization.
         
