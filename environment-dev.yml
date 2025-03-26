@@ -1,0 +1,37 @@
+name: ocr_quality_dev
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Core dependencies
+  - python>=3.9
+  - numpy>=1.20.0
+  - nltk>=3.6.0
+  - beautifulsoup4>=4.9.0
+  - requests>=2.25.0
+  - scikit-learn>=1.0.0
+  - pandas>=1.3.0
+  - matplotlib>=3.4.0
+  - pillow
+
+  # Bayesian modeling library
+  - pymc>=4.0.0
+
+  # Development tools
+  - flake8  # Linting
+  - black  # Code formatting
+  - isort  # Import sorting
+  - pytest  # Testing
+  - pytest-cov  # Test coverage
+  
+  # Documentation and notebooks
+  - jupyter  # Jupyter notebooks
+  - notebook  # Traditional notebook interface
+  - jupyterlab  # Modern Jupyter interface
+
+  # Package management
+  - pip
+  - pip:
+    - PyMuPDF  # This is the package name on PyPI
+    - python-dotenv>=0.19.0  # Environment variable management
+    - opencv-python
