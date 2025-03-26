@@ -16,7 +16,182 @@ from dotenv import load_dotenv, find_dotenv
 PROJECT_ROOT = os.path.dirname(find_dotenv())
 
 
-class WordImage:
+
+class ImageAlgorithms:
+    """
+    A class for image algorithms. Intended for subclassing.
+    """
+    def __init__(self):
+        pass
+
+    def _convert_to_grayscale(self, image: np.ndarray) -> np.ndarray:
+        """
+        Converts the image to grayscale.
+
+        Args:
+            image (numpy.ndarray): The image to convert.
+
+        Returns:
+            numpy.ndarray: The grayscale image.
+        """
+        return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    def _convert_to_rgb(self, image: np.ndarray) -> np.ndarray:
+        """
+        Converts the image to RGB.
+
+        Args:
+            image (numpy.ndarray): The image to convert.
+
+        Returns:
+            numpy.ndarray: The RGB image.
+        """
+        return cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+
+    def _convert_to_binary(self, image: np.ndarray) -> np.ndarray:
+        """
+        Converts the image to binary.
+
+        Args:
+            image (numpy.ndarray): The image to convert.
+
+        Returns:
+            numpy.ndarray: The binary image.
+        """
+        return cv2.threshold(image, 127, 255, cv2.THRESH_BINARY)[1]
+
+    def _extract_edge_map(self, image: np.ndarray, method: str = 'canny') -> np.ndarray:
+        """
+        Extracts an edge map from a binary or grayscale image.
+        
+        Args:
+            image (numpy.ndarray): Input image.
+            method (str): Edge detection method ('canny' or 'sobel').
+        
+        Returns:
+            numpy.ndarray: Edge map image.
+        """
+        if len(image.shape) == 3:
+            image = self._convert_to_grayscale(image)
+        else:
+            image = image.copy()
+        
+        if method == 'canny':
+            edges = cv2.Canny(image, 100, 200)
+        elif method == 'sobel':
+            grad_x = cv2.Sobel(image, cv2.CV_64F, 1, 0, ksize=3)
+            grad_y = cv2.Sobel(image, cv2.CV_64F, 0, 1, ksize=3)
+            edges = cv2.magnitude(grad_x, grad_y)
+            edges = np.uint8(edges / np.max(edges) * 255)  # Normalize to 0-255
+        else:
+            raise ValueError("Invalid method. Use 'canny' or 'sobel'.")
+        
+        return edges
+          
+    def _smudge(self, image: np.ndarray, distance_threshold: float = 1.5) -> np.ndarray:
+        """
+        Apply a distance-based smudging for natural-looking text degradation.
+        
+        Args:
+            image (numpy.ndarray): The image to smudge.
+            distance_threshold: Distance threshold for smudging (in pixels)
+                            Higher values create more smudging
+        
+        Returns:
+            Binary image with smudged text (black on white)
+        """
+
+        # Convert to grayscale
+        if len(image.shape) == 3:
+            gray_image = self._convert_to_grayscale(image)
+        else:
+            gray_image = image.copy()
+        
+        # Threshold to binary (text as black)
+        _, binary = self._convert_to_binary(gray_image)
+               
+        # Calculate distance transform
+        dist = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
+        
+        # Create output binary image (black text on white background)
+        smudged = np.ones_like(binary) * 255
+        smudged[dist <= distance_threshold] = 0
+        
+        # Convert back to RGB to match input format
+        return self._convert_to_rgb(smudged)
+
+    def _fade(self, image: np.ndarray, distance_threshold: float = 1.5) -> np.ndarray:
+        """
+        Apply a distance-based fade for more natural text degradation.
+
+        Args:
+            image (numpy.ndarray): The image to fade.
+            distance_threshold: Distance threshold for fade (in pixels)
+                            Higher values create more fade
+
+        Returns:
+            Binary image with faded text
+        """
+        # Convert to grayscale  
+        if len(image.shape) == 3:
+            gray_image = self._convert_to_grayscale(image)
+        else:
+            gray_image = image.copy()
+
+        # Invert the image
+        inverted_image = cv2.bitwise_not(gray_image)
+
+                # Threshold to binary (text as black)
+        _, binary = self._convert_to_binary(inverted_image)
+               
+        # Calculate distance transform
+        dist = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
+        
+        # Create output binary image (black text on white background)
+        faded = np.ones_like(binary) * 255
+        faded[dist <= distance_threshold] = 0
+        
+        # Convert back to RGB to match input format
+        return self._convert_to_rgb(faded)
+
+    def _remove_specks(self, image: np.ndarray, min_size: int = 30) -> np.ndarray:
+        """
+        Remove small islands (connected components) of black pixels from the image.
+        
+        Args:
+            min_size: Minimum size (in pixels) for a connected component to be kept
+        """
+        # Make sure image is grayscale
+        if len(image.shape) == 3:
+            gray_image = self._convert_to_grayscale(image)
+        else:
+            gray_image = image.copy()
+        
+        # Make sure it's binary (0 for text, 255 for background)
+        _, binary = self._convert_to_binary(gray_image)
+        
+        # Find connected components (black regions)
+        # The 4 indicates 4-connectivity (only consider adjacent pixels, not diagonals)
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+            cv2.bitwise_not(binary), 4, cv2.CV_32S
+        )
+        
+        # Create output image (start with all white)
+        output = np.ones_like(binary) * 255
+        
+        # Copy all components that are large enough to the output image
+        # Label 0 is the background (white), so we skip it
+        for i in range(1, num_labels):
+            if stats[i, cv2.CC_STAT_AREA] >= min_size:
+                # This component is large enough to keep
+                output[labels == i] = 0
+        
+        # Convert back to RGB
+        return self._convert_to_rgb(output)
+
+
+
+class WordImage(ImageAlgorithms):
     """
     A class for representing a word image.
     """
@@ -27,6 +202,7 @@ class WordImage:
         Args:
             image (np.ndarray, optional): The image to set. Defaults to an empty array.
         """
+        super().__init__()
         self.image = image
         self.modified_image = image.copy()
 
@@ -105,7 +281,7 @@ class WordImageExtractor(WordImage):
     """
     A class for extracting a word image from a PDF document.
     """
-    def __init__(self, pdf_path: str, page_number: int, bounding_box: list, debug: bool = False):
+    def __init__(self, pdf_path: str, page_number: int, bounding_box: list):
         """
         Initialize the WordImageExtractor with the path to the PDF, page number, polygon, DPI, and debug flag.
 
@@ -113,14 +289,11 @@ class WordImageExtractor(WordImage):
             pdf_path (str): The path to the PDF document.
             page_number (int): The page number in the PDF document (0-based index).
             bounding_box (list): A list of coordinates representing the bounding box (x, y, width, height).
-            debug (bool, optional): Flag to enable debug mode. Defaults to False.
         """
         super().__init__()
         self.pdf_path = pdf_path
         self.page_number = page_number
-
         self.bounding_box = bounding_box
-        self.debug = debug
         self._extract_word_image()
 
     def _extract_word_image(self) -> np.ndarray:
@@ -158,53 +331,18 @@ class WordImageExtractor(WordImage):
 
         # Apply binary thresholding to clean up fuzzy edges
         # You can adjust the threshold value (127) as needed
-        _, binary = cv2.threshold(cropped_img, 127, 255, cv2.THRESH_BINARY)
-
-        if self.debug:
-            plt.imshow(binary)
-            plt.axis('off')
-            plt.show()
+        _, binary = self._convert_to_binary(cropped_img)
 
         self.set_image(binary)
 
-    def remove_specks(self, min_size: int = 30) -> np.ndarray:
+    def remove_specks(self, min_size: int = 30):
         """
         Remove small islands (connected components) of black pixels from the image.
         
         Args:
             min_size: Minimum size (in pixels) for a connected component to be kept
         """
-        image = self.get_image()
-
-        # Make sure image is grayscale
-        if len(image.shape) == 3:
-            gray_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-        else:
-            gray_image = image.copy()
-        
-        # Make sure it's binary (0 for text, 255 for background)
-        _, binary = cv2.threshold(gray_image, 127, 255, cv2.THRESH_BINARY)
-        
-        # Find connected components (black regions)
-        # The 4 indicates 4-connectivity (only consider adjacent pixels, not diagonals)
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
-            cv2.bitwise_not(binary), 4, cv2.CV_32S
-        )
-        
-        # Create output image (start with all white)
-        output = np.ones_like(binary) * 255
-        
-        # Copy all components that are large enough to the output image
-        # Label 0 is the background (white), so we skip it
-        for i in range(1, num_labels):
-            if stats[i, cv2.CC_STAT_AREA] >= min_size:
-                # This component is large enough to keep
-                output[labels == i] = 0
-        
-        # Convert back to RGB if input was RGB
-        if len(image.shape) == 3:
-            output = cv2.cvtColor(output, cv2.COLOR_GRAY2RGB)
-        
+        output = self._remove_specks(self.get_image(), min_size)
         self.set_modified_image(output)
 
 
@@ -212,7 +350,7 @@ class WordImageRenderer(WordImage):
     """
     A class for rendering a word as an image of the same size as the polygon.
     """
-    def __init__(self, word: str, width: int, height: int, typeface: str, debug: bool = False):
+    def __init__(self, word: str, width: int, height: int, typeface: str):
         """
         Initialize the WordImageRenderer with word and polygon details.
 
@@ -221,14 +359,12 @@ class WordImageRenderer(WordImage):
             width (int): The width of the image, in pixels.
             height (int): The height of the image, in pixels.
             typeface (str): The typeface to use for the rendered image.
-            debug (bool, optional): If True, show the rendered image for debugging. Defaults to False.
         """
         super().__init__()
         self.word = word
         self.width = width
         self.height = height
         self.typeface = typeface
-        self.debug = debug
         self.kernel_size = 5
 
         # Assemble paths to the fonts.
@@ -305,49 +441,21 @@ class WordImageRenderer(WordImage):
         
         # convert to numpy array
         rendered_img = np.array(rendered_img)
-
-        if self.debug:
-            plt.imshow(rendered_img)
-            plt.axis('off')
-            plt.show()
         
         self.set_image(rendered_img)
       
-    def smudge(self, distance_threshold: float = 1.5) -> np.ndarray:
+    def smudge(self, distance_threshold: float = 1.5):
         """
         Apply a distance-based smudging for natural-looking text degradation.
         
         Args:
             distance_threshold: Distance threshold for smudging (in pixels)
                             Higher values create more smudging
-        
-        Returns:
-            Binary image with smudged text (black on white)
         """
-        image = self.get_image()
+        output = self._smudge(self.get_image(), distance_threshold)
+        self.set_modified_image(output)
 
-        # Convert to grayscale
-        if len(image.shape) == 3:
-            gray_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-        else:
-            gray_image = image.copy()
-        
-        # Threshold to binary (text as black)
-        _, binary = cv2.threshold(gray_image, 127, 255, cv2.THRESH_BINARY)
-               
-        # Calculate distance transform
-        dist = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
-        
-        # Create output binary image (black text on white background)
-        smudged = np.ones_like(binary) * 255
-        smudged[dist <= distance_threshold] = 0
-        
-        # Convert back to RGB to match input format
-        smudged_rgb = cv2.cvtColor(smudged, cv2.COLOR_GRAY2RGB)
-        
-        self.set_modified_image(smudged_rgb)
-
-    def fade(self, distance_threshold: float = 1.5) -> np.ndarray:
+    def fade(self, distance_threshold: float = 1.5):
         """
         Apply a distance-based fade for more natural text degradation.
 
@@ -355,143 +463,13 @@ class WordImageRenderer(WordImage):
             distance_threshold: Distance threshold for fade (in pixels)
                             Higher values create more fade
 
-        Returns:
-            Binary image with faded text
         """
-        image = self.get_image()
-
-        # Convert to grayscale  
-        if len(image.shape) == 3:
-            gray_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-        else:
-            gray_image = image.copy()
-
-        # Invert the image
-        inverted_image = cv2.bitwise_not(gray_image)
-
-                # Threshold to binary (text as black)
-        _, binary = cv2.threshold(inverted_image, 127, 255, cv2.THRESH_BINARY)
-               
-        # Calculate distance transform
-        dist = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
-        
-        # Create output binary image (black text on white background)
-        smudged = np.ones_like(binary) * 255
-        smudged[dist <= distance_threshold] = 0
-        
-        # Convert back to RGB to match input format
-        smudged_rgb = cv2.cvtColor(smudged, cv2.COLOR_GRAY2RGB)
-        self.set_modified_image(smudged_rgb)
+        output = self._fade(self.get_image(), distance_threshold)
+        self.set_modified_image(output)
 
 
-class WordPairProcessor:
-    """
-    A wrapper class for processing extracting a single word from a PDF document as an image,
-    and rendering the corresponding OCR-extracted word as an image of the same size.
-    """
-    def __init__(self, 
-                 pdf_path: str, 
-                 page_number: int, 
-                 bounding_box: list, 
-                 word: str, 
-                 typeface: str, 
-                 denoise: bool = False,
-                 smudge: float = 1.5,
-                 debug: bool = False):
-        """
-        Initialize the WordImageProcessor with PDF details and word information.
-        
-        Args:
-            pdf_path: Path to the PDF file.
-            page_number: 1-based page number.
-            bounding_box: A flat list of floats [x, y, width, height] defining the bounding box.
-            word: The text to render.
-            typeface: The typeface to use for the rendered image.
-            denoise: If True, denoise the extracted image.
-            smudge: How much to smudge (positive value) or fade (negative value) the rendered image.
-            debug: If True, show the rendered image for debugging.
-        """
-        self.pdf_path = pdf_path
-        self.page_number = page_number
-        self.bounding_box = bounding_box
-        self.word = word
-        self.typeface = typeface
-        self.denoise = denoise
-        self.smudge = smudge
-        self.debug = debug
 
-        self.extract_obj = WordImageExtractor(pdf_path=self.pdf_path, 
-                                              page_number=self.page_number, 
-                                              bounding_box=self.bounding_box, 
-                                              debug=self.debug)
-        
-        self.render_obj = WordImageRenderer(word=self.word, 
-                                            width=self.extract_obj.get_width(), 
-                                            height=self.extract_obj.get_height(),
-                                            typeface=self.typeface,
-                                            debug=self.debug)
-
-        if self.denoise:
-            self.extract_obj.remove_specks()
-
-        if self.smudge > 0:
-            self.render_obj.smudge(distance_threshold=self.smudge)
-        elif self.smudge < 0:
-            self.render_obj.fade(distance_threshold=abs(self.smudge))
-
-        self._validate_images()
-    
-    def _validate_images(self):
-        """
-        Validates that the dimensions of the extracted and rendered images are the same.
-
-        Raises:
-            ValueError: If the dimensions of the extracted and rendered images do not match.
-        """
-        if self.extract_obj.get_dimensions() != self.render_obj.get_dimensions():
-            raise ValueError("Extracted and rendered images have different dimensions.")
-        
-        if self.extract_obj.get_modified_dimensions() != self.render_obj.get_modified_dimensions():
-            raise ValueError("Extracted and rendered images have different dimensions.")
-
-    def get_extracted_word_image(self) -> np.ndarray:
-        """
-        Retrieves the extracted word image.
-
-        Returns:
-            np.ndarray: The extracted word image as a numpy array.
-        """
-        return self.extract_obj.get_modified_image()
-
-    def get_rendered_word_image(self) -> np.ndarray:
-        """
-        Retrieves the rendered word image.
-
-        Returns:
-            np.ndarray: The rendered word image as a numpy array.
-        """
-        return self.render_obj.get_modified_image()
-
-    def show_images(self):
-        """
-        Shows the extracted and rendered word images.
-        """
-        plt.imshow(self.get_extracted_word_image())
-        plt.title("Extracted Word Image")
-        plt.axis('on')  # Keep the box
-        plt.xticks([])  # Remove x-axis ticks
-        plt.yticks([])  # Remove y-axis ticks
-        plt.show()
-
-        plt.imshow(self.get_rendered_word_image())
-        plt.title("Rendered Word Image")
-        plt.axis('on')  # Keep the box
-        plt.xticks([])  # Remove x-axis ticks
-        plt.yticks([])  # Remove y-axis ticks
-        plt.show()
-
-
-class WordScorer:
+class WordScorer(ImageAlgorithms):
     """
     A class for scoring the similarity of two word images based on their projection histograms and Hu Moments.
     """
@@ -508,7 +486,8 @@ class WordScorer:
             rendered_image: numpy array of the rendered word image.
             edge_map_method: method for extracting the edge map ('canny' or 'sobel').
             projection_bin_width: width of the bins for the projection histograms.
-        """ 
+        """
+        super().__init__()
         self.extracted_image = self._convert_to_binary(extracted_image)
         self.rendered_image = self._convert_to_binary(rendered_image)
         self.edge_map_method = edge_map_method
@@ -528,56 +507,6 @@ class WordScorer:
         self.projection_distance_width = self.compute_wasserstein_distance(self.extracted_projection_histogram[1], self.rendered_projection_histogram[1])
 
         self.hu_distance = self.compute_cosine_distance(self.extracted_hu_moments, self.rendered_hu_moments)
-
-    def _convert_to_grayscale(self, image: np.ndarray) -> np.ndarray:
-        """
-        Converts the image to grayscale.
-
-        Args:
-            image (numpy.ndarray): The image to convert.
-
-        Returns:
-            numpy.ndarray: The grayscale image.
-        """
-        return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-    def _convert_to_binary(self, image: np.ndarray) -> np.ndarray:
-        """
-        Converts the image to binary.
-
-        Args:
-            image (numpy.ndarray): The image to convert.
-
-        Returns:
-            numpy.ndarray: The binary image.
-        """
-        return cv2.threshold(image, 127, 255, cv2.THRESH_BINARY)[1]
-
-    def _extract_edge_map(self, image: np.ndarray, method: str = 'canny') -> np.ndarray:
-        """
-        Extracts an edge map from a binary or grayscale image.
-        
-        Args:
-            image (numpy.ndarray): Input image.
-            method (str): Edge detection method ('canny' or 'sobel').
-        
-        Returns:
-            numpy.ndarray: Edge map image.
-        """
-        if len(image.shape) == 3:
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        
-        if method == 'canny':
-            edges = cv2.Canny(image, 100, 200)
-        elif method == 'sobel':
-            grad_x = cv2.Sobel(image, cv2.CV_64F, 1, 0, ksize=3)
-            grad_y = cv2.Sobel(image, cv2.CV_64F, 0, 1, ksize=3)
-            edges = cv2.magnitude(grad_x, grad_y)
-            edges = np.uint8(edges / np.max(edges) * 255)  # Normalize to 0-255
-        else:
-            raise ValueError("Invalid method. Use 'canny' or 'sobel'.")
-        
-        return edges
 
     def hausdorff_distance(self, mode: str = 'all') -> float:
         """
@@ -790,6 +719,126 @@ class WordScorer:
 
 
 
+class WordPairProcessor:
+    """
+    A wrapper class for processing extracting a single word from a PDF document as an image,
+    and rendering the corresponding OCR-extracted word as an image of the same size.
+    """
+    def __init__(self, 
+                 pdf_path: str, 
+                 page_number: int, 
+                 bounding_box: list, 
+                 word: str, 
+                 typeface: str, 
+                 denoise: bool = False,
+                 smudge: float = 1.5,
+                 debug: bool = False):
+        """
+        Initialize the WordImageProcessor with PDF details and word information.
+        
+        Args:
+            pdf_path: Path to the PDF file.
+            page_number: 1-based page number.
+            bounding_box: A flat list of floats [x, y, width, height] defining the bounding box.
+            word: The text to render.
+            typeface: The typeface to use for the rendered image.
+            denoise: If True, denoise the extracted image.
+            smudge: How much to smudge (positive value) or fade (negative value) the rendered image.
+            debug: If True, show the rendered image for debugging.
+        """
+        self.pdf_path = pdf_path
+        self.page_number = page_number
+        self.bounding_box = bounding_box
+        self.word = word
+        self.typeface = typeface
+        self.denoise = denoise
+        self.smudge = smudge
+        self.debug = debug
+
+        self.extract_obj = WordImageExtractor(pdf_path=self.pdf_path, 
+                                              page_number=self.page_number, 
+                                              bounding_box=self.bounding_box, 
+                                              debug=self.debug)
+        
+        self.render_obj = WordImageRenderer(word=self.word, 
+                                            width=self.extract_obj.get_width(), 
+                                            height=self.extract_obj.get_height(),
+                                            typeface=self.typeface,
+                                            debug=self.debug)
+
+        if self.denoise:
+            self.extract_obj.remove_specks()
+
+        if self.smudge > 0:
+            self.render_obj.smudge(distance_threshold=self.smudge)
+        elif self.smudge < 0:
+            self.render_obj.fade(distance_threshold=abs(self.smudge))
+
+        self._validate_images()
+    
+    def _validate_images(self):
+        """
+        Validates that the dimensions of the extracted and rendered images are the same.
+
+        Raises:
+            ValueError: If the dimensions of the extracted and rendered images do not match.
+        """
+        if self.extract_obj.get_dimensions() != self.render_obj.get_dimensions():
+            raise ValueError("Extracted and rendered images have different dimensions.")
+        
+        if self.extract_obj.get_modified_dimensions() != self.render_obj.get_modified_dimensions():
+            raise ValueError("Extracted and rendered images have different dimensions.")
+
+    def get_extracted_word_image(self) -> np.ndarray:
+        """
+        Retrieves the extracted word image.
+
+        Returns:
+            np.ndarray: The extracted word image as a numpy array.
+        """
+        return self.extract_obj.get_modified_image()
+
+    def get_rendered_word_image(self) -> np.ndarray:
+        """
+        Retrieves the rendered word image.
+
+        Returns:
+            np.ndarray: The rendered word image as a numpy array.
+        """
+        return self.render_obj.get_modified_image()
+
+    def show_images(self):
+        """
+        Shows the extracted and rendered word images.
+        """
+        plt.imshow(self.get_extracted_word_image())
+        plt.title("Extracted Word Image")
+        plt.axis('on')  # Keep the box
+        plt.xticks([])  # Remove x-axis ticks
+        plt.yticks([])  # Remove y-axis ticks
+        plt.show()
+
+        plt.imshow(self.get_rendered_word_image())
+        plt.title("Rendered Word Image")
+        plt.axis('on')  # Keep the box
+        plt.xticks([])  # Remove x-axis ticks
+        plt.yticks([])  # Remove y-axis ticks
+        plt.show()
+
+
+class ParagraphProcessor:
+    """
+    A class for processing a paragraph to obtain quality scores for each word.
+    """
+    def __init__(self, paragraph: str):
+        """
+        Initialize the ParagraphProcessor with a paragraph.
+        """
+        pass
+
+
+
+
 class Document:
     """
     A class for representing a document.
@@ -827,7 +876,7 @@ class Document:
 
 class DocumentProcessor(Document):
     """
-    A class for processing a document.
+    A class for processing a document to obtain quality scores for each word.
     """
     def __init__(self, pdf_path: str, json_path: str):
         """
