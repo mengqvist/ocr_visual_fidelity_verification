@@ -4,7 +4,7 @@ from PIL import Image
 import numpy as np
 from numpy.linalg import norm
 import matplotlib.pyplot as plt
-from src.parsers.json_parser import BoundingBox
+from vfv import json_parser
 from PIL import Image, ImageDraw, ImageFont
 import math
 from scipy.stats import wasserstein_distance
@@ -440,12 +440,6 @@ class WordPairProcessor:
             self.render_obj.fade(distance_threshold=abs(self.smudge))
 
         self._validate_images()
-
-    def _denoise_image(self) -> np.ndarray:
-        """
-        Denoises the exptracted image to get rid of black speckles.
-        """
-        raise NotImplementedError("Denoising is not implemented yet.")
     
     def _validate_images(self):
         """
@@ -793,3 +787,61 @@ class WordScorer:
 
 # distance = robust_chamfer_distance(img1, img2, percentile=90)
 # print("Robust Chamfer Distance:", distance)
+
+
+
+class Document:
+    """
+    A class for representing a document.
+    """
+    def __init__(self, pdf_path: str, json_path: str):
+        """
+        Initialize the Document with a PDF and JSON path.
+        """
+        if not os.path.isfile(pdf_path):
+            raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+        if not os.path.isfile(json_path):
+            raise FileNotFoundError(f"JSON file not found: {json_path}")
+        self.pdf_path = pdf_path
+        self.json_path = json_path
+        self.json_loader = json_parser.JSONParser(json_path)
+
+    def get_pdf_path(self) -> str:
+        """
+        Get the path to the PDF document.
+
+        Returns:
+            str: The path to the PDF document.
+        """
+        return self.pdf_path
+    
+    def get_json_path(self) -> str:
+        """
+        Get the path to the JSON document.
+
+        Returns:
+            str: The path to the JSON document.
+        """
+        return self.json_path
+
+
+class DocumentProcessor(Document):
+    """
+    A class for processing a document.
+    """
+    def __init__(self, pdf_path: str, json_path: str):
+        """
+        Initialize the DocumentProcessor with a Document.
+
+        Args:
+            pdf_path (str): The path to the PDF document.
+            json_path (str): The path to the JSON document.
+        """
+        super().__init__(pdf_path, json_path)
+
+
+
+
+
+
+
