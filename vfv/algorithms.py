@@ -81,6 +81,9 @@ class ImageColorAlgorithms:
         else:
             raise ValueError("Invalid method. Use 'canny' or 'sobel'.")
         
+        # Invert the edges
+        edges = cv2.bitwise_not(edges)
+
         return edges
 
 
@@ -394,34 +397,6 @@ class ImageSimilarityAlgorithms(ImageColorAlgorithms):
         dt = cv2.distanceTransform(255 - image2, cv2.DIST_L2, 5)
         sampled_distances = dt[y_coords, x_coords]
         distance = np.percentile(sampled_distances, percentile)
-        similarity = 1.0 / (1.0 + distance)
-        return similarity
-
-    def _hausdorff_similarity(self, image1: np.ndarray, image2: np.ndarray) -> float:
-        """
-        Computes the Hausdorff similarity between two binary images.
-        The similarity is defined as:
-            similarity = 1 / (1 + Hausdorff_distance)
-        so that a distance of 0 maps to a similarity of 1.
-        If one image contains no black pixels, returns 0.
-        
-        Args:
-            image1 (numpy.ndarray): First binary image.
-            image2 (numpy.ndarray): Second binary image.
-        
-        Returns:
-            float: Hausdorff similarity between 0 and 1.
-        """
-        points1 = np.column_stack(np.where(image1 == 0))
-        points2 = np.column_stack(np.where(image2 == 0))
-        
-        if len(points1) == 0 or len(points2) == 0:
-            return 0.0  # No comparable features
-        
-        # Compute directed Hausdorff distances between black pixel coordinates
-        d1 = directed_hausdorff(points1, points2)[0]
-        d2 = directed_hausdorff(points2, points1)[0]
-        distance = max(d1, d2)
         similarity = 1.0 / (1.0 + distance)
         return similarity
 

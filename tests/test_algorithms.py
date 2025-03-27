@@ -280,19 +280,6 @@ def test_robust_chamfer_similarity(similarity_alg):
     sim_blank = similarity_alg._robust_chamfer_similarity(img1, img_blank)
     assert sim_blank == 0.0
 
-def test_hausdorff_similarity(similarity_alg):
-    # Create two images with a single black pixel shifted slightly
-    img1 = np.full((100, 100), 255, dtype=np.uint8)
-    img2 = np.full((100, 100), 255, dtype=np.uint8)
-    img1[10, 10] = 0
-    img2[12, 12] = 0
-    sim_val = similarity_alg._hausdorff_similarity(img1, img2)
-    assert 0 <= sim_val < 1.0
-    # Identical images should yield a similarity of 1
-    img3 = img1.copy()
-    sim_identical = similarity_alg._hausdorff_similarity(img1, img3)
-    assert np.isclose(sim_identical, 1.0)
-
 def test_jaccard_similarity(similarity_alg):
     # Create two small binary images manually.
     img1 = np.array([[0, 255],
