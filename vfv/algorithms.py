@@ -352,27 +352,36 @@ class ImageSimilarityAlgorithms(ImageColorAlgorithms):
         """
         hu1 = self._hu_moments(image1)
         hu2 = self._hu_moments(image2)
-        return self._cosine_similarity(hu1, hu2)
+        return float(self._cosine_similarity(hu1, hu2))
 
-    def _projection_histogram_similarity(self, image1: np.ndarray, image2: np.ndarray) -> float:
+    def _projection_histogram_similarity(self, image1: np.ndarray, image2: np.ndarray, bin_width: int = 4) -> float:
         """
         Computes the projection histogram similarity between two images.
         The similarity is defined as the average of the wasserstein similarities between the projection histograms.
-        """
-        hist1_vertical, hist1_horizontal = self._projection_histogram(image1)
-        hist2_vertical, hist2_horizontal = self._projection_histogram(image2)
-        return (self._wasserstein_similarity(hist1_vertical, hist2_vertical) + self._wasserstein_similarity(hist1_horizontal, hist2_horizontal)) / 2
 
-    def _robust_chamfer_similarity(self, image1: np.ndarray, image2: np.ndarray, percentile: int = 95) -> float:
+        Args:
+            image1 (numpy.ndarray): First image.
+            image2 (numpy.ndarray): Second image.
+            bin_width (int): Width (in pixels) of each bin for the vertical and horizontal projections.
+        
+        Returns:
+            float: Projection histogram similarity between 0 and 1.
+        """
+        hist1_vertical, hist1_horizontal = self._projection_histogram(image1, bin_width=bin_width)
+        hist2_vertical, hist2_horizontal = self._projection_histogram(image2, bin_width=bin_width)
+        return float((self._wasserstein_similarity(hist1_vertical, hist2_vertical) + self._wasserstein_similarity(hist1_horizontal, hist2_horizontal)) / 2)
+
+    def _robust_chamfer_similarity(self, image1: np.ndarray, image2: np.ndarray, percentile: int = 95, alpha: float = 10) -> float:
         """
         Computes a robust Chamfer similarity by using a trimmed percentile.
         The underlying distance is converted to similarity as:
-            similarity = 1 / (1 + distance)
+            similarity = 1 / (1 + (distance / alpha))
         
         Args:
             image1 (numpy.ndarray): First image.
             image2 (numpy.ndarray): Second image.
             percentile (int): Percentile to use for trimming.
+            alpha (float): Scaling factor for the distance.
         
         Returns:
             float: Robust Chamfer similarity score between 0 and 1.
@@ -394,11 +403,67 @@ class ImageSimilarityAlgorithms(ImageColorAlgorithms):
         if len(y_coords) == 0:
             return 0.0
 
-        dt = cv2.distanceTransform(255 - image2, cv2.DIST_L2, 5)
+        dt = cv2.distanceTransform(image2, cv2.DIST_L2, 5)
         sampled_distances = dt[y_coords, x_coords]
         distance = np.percentile(sampled_distances, percentile)
-        similarity = 1.0 / (1.0 + distance)
-        return similarity
+        similarity = 1.0 / (1.0 + (distance / alpha))
+        return float(similarity)
+
+    def _chamfer_dispersion_similarity(self, image1: np.ndarray, image2: np.ndarray, outlier_percent: float = 5, beta: float = 1.0) -> float:
+        """
+        Computes a dispersion-based similarity for the chamfer distances between two images.
+        This method removes the top `outlier_percent` of distances (to discard extreme outliers),
+        then computes a ratio of the mean of the bottom 80% to the mean of the top 20% and 
+        uses this ratio as the similarity score.
+        
+        Args:
+            image1 (numpy.ndarray): First image (e.g., extracted word shape).
+            image2 (numpy.ndarray): Second image (e.g., rendered counterpart).
+            outlier_percent (float): Percentage of the most distant points to discard.
+            beta (float): Scaling factor to adjust the sensitivity.
+        
+        Returns:
+            float: Similarity score between 0 and 1.
+        """
+        # Convert to binary if needed.
+        if len(image1.shape) == 3 or len(image2.shape) == 3:
+            image1 = self._convert_to_binary(image1)
+            image2 = self._convert_to_binary(image2)
+        else:
+            image1 = image1.copy()
+            image2 = image2.copy()
+
+        # If image2 has no foreground, return 0 similarity.
+        if np.count_nonzero(image2 == 0) == 0:
+            return 0.0
+
+        # Use foreground (black, value==0) pixels from image1 for distance sampling.
+        y_coords, x_coords = np.where(image1 == 0)
+        if len(y_coords) == 0:
+            return 0.0
+
+        # Compute distance transform on image2.
+        dt = cv2.distanceTransform(image2, cv2.DIST_L2, 5)
+        sampled_distances = dt[y_coords, x_coords]
+
+        # Trim the top outlier_percent of distances.
+        threshold = np.percentile(sampled_distances, 100 - outlier_percent)
+        trimmed = sampled_distances[sampled_distances <= threshold]
+        if trimmed.size == 0:
+            return 0.0
+
+        # devide into top 20% and bottom 80%
+        top_20 = trimmed[trimmed > np.percentile(trimmed, 80)]
+        bottom_80 = trimmed[trimmed <= np.percentile(trimmed, 80)]
+        mean_val_80 = bottom_80.mean()
+        mean_val_20 = top_20.mean()
+
+        # Compare the percentages
+        similarity = mean_val_80 / mean_val_20
+
+        # Map coefficient of variation to a similarity between 0 and 1.
+        return float(similarity)
+
 
     def _jaccard_similarity(self, image1: np.ndarray, image2: np.ndarray) -> float:
         """
@@ -422,5 +487,18 @@ class ImageSimilarityAlgorithms(ImageColorAlgorithms):
         if union == 0:
             return 0.0  # Avoid division by zero
         
-        return intersection / union
+        return float(intersection / union)
     
+
+    def _black_pixel_similarity(self, image1: np.ndarray, image2: np.ndarray) -> float:
+        """
+        Computes the black pixel similarity between two images.
+
+        Args:
+            image1 (numpy.ndarray): First image.
+            image2 (numpy.ndarray): Second image.
+
+        Returns:
+            float: Black pixel similarity score between 0 and 1.
+        """
+        return float(np.sum(image1 == 0) / np.sum(image2 == 0))

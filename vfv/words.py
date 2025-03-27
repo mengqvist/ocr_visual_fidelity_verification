@@ -6,13 +6,13 @@ from vfv import json_parser
 from PIL import Image, ImageDraw, ImageFont
 import os
 from dotenv import load_dotenv, find_dotenv
-from algorithms import ImageSimilarityAlgorithms, ImageColorAlgorithms, ImageDegradationAlgorithms
+from vfv.algorithms import ImageSimilarityAlgorithms, ImageColorAlgorithms, ImageDegradationAlgorithms
 
 
 PROJECT_ROOT = os.path.dirname(find_dotenv())
 
 
-class WordImage(ImageColorAlgorithms):
+class WordImage(ImageDegradationAlgorithms):
     """
     A class for representing a word image.
     """
@@ -289,7 +289,7 @@ class WordImageRenderer(WordImage):
         self.set_modified_image(output)
 
 
-class WordPairProcessor:
+class WordPairProcessor(ImageSimilarityAlgorithms):
     """
     A wrapper class for processing extracting a single word from a PDF document as an image,
     and rendering the corresponding OCR-extracted word as an image of the same size.
@@ -302,6 +302,7 @@ class WordPairProcessor:
                  typeface: str, 
                  denoise: bool = False,
                  smudge: float = 1.5,
+                 edge_map_method: str = 'sobel',
                  debug: bool = False):
         """
         Initialize the WordImageProcessor with PDF details and word information.
@@ -314,8 +315,10 @@ class WordPairProcessor:
             typeface: The typeface to use for the rendered image.
             denoise: If True, denoise the extracted image.
             smudge: How much to smudge (positive value) or fade (negative value) the rendered image.
+            edge_map_method: The method to use for edge detection.
             debug: If True, show the rendered image for debugging.
         """
+        super().__init__()
         self.pdf_path = pdf_path
         self.page_number = page_number
         self.bounding_box = bounding_box
@@ -324,17 +327,15 @@ class WordPairProcessor:
         self.denoise = denoise
         self.smudge = smudge
         self.debug = debug
-
+        self.edge_map_method = edge_map_method
         self.extract_obj = WordImageExtractor(pdf_path=self.pdf_path, 
                                               page_number=self.page_number, 
-                                              bounding_box=self.bounding_box, 
-                                              debug=self.debug)
+                                              bounding_box=self.bounding_box)
         
         self.render_obj = WordImageRenderer(word=self.word, 
                                             width=self.extract_obj.get_width(), 
                                             height=self.extract_obj.get_height(),
-                                            typeface=self.typeface,
-                                            debug=self.debug)
+                                            typeface=self.typeface)
 
         if self.denoise:
             self.extract_obj.remove_specks()
@@ -344,8 +345,22 @@ class WordPairProcessor:
         elif self.smudge < 0:
             self.render_obj.fade(distance_threshold=abs(self.smudge))
 
+        self.extracted_image = self.extract_obj.get_modified_image()
+        self.rendered_image = self.render_obj.get_modified_image()
+
+        self.extracted_image = self._convert_to_binary(self.extracted_image)
+        self.rendered_image = self._convert_to_binary(self.rendered_image)
+        self.projection_bin_width = 4 # temporary
+
+        # Extract the edge maps
+        self.extracted_edge_map = self._extract_edge_map(self.extracted_image, self.edge_map_method)
+        self.rendered_edge_map = self._extract_edge_map(self.rendered_image, self.edge_map_method)
+
         self._validate_images()
-    
+
+        # Compute all the similarity scores
+        pass
+
     def _validate_images(self):
         """
         Validates that the dimensions of the extracted and rendered images are the same.
@@ -358,42 +373,74 @@ class WordPairProcessor:
         
         if self.extract_obj.get_modified_dimensions() != self.render_obj.get_modified_dimensions():
             raise ValueError("Extracted and rendered images have different dimensions.")
-
-    def get_extracted_word_image(self) -> np.ndarray:
-        """
-        Retrieves the extracted word image.
-
-        Returns:
-            np.ndarray: The extracted word image as a numpy array.
-        """
-        return self.extract_obj.get_modified_image()
-
-    def get_rendered_word_image(self) -> np.ndarray:
-        """
-        Retrieves the rendered word image.
-
-        Returns:
-            np.ndarray: The rendered word image as a numpy array.
-        """
-        return self.render_obj.get_modified_image()
+        
+        if self.extracted_image.shape != self.rendered_image.shape:
+            raise ValueError("Extracted and rendered images have different dimensions.")
+        
+        if self.extracted_edge_map.shape != self.rendered_edge_map.shape:
+            raise ValueError("Extracted and rendered edge maps have different dimensions.")
 
     def show_images(self):
         """
         Shows the extracted and rendered word images.
         """
-        plt.imshow(self.get_extracted_word_image(), cmap='gray')
+        plt.imshow(self.extracted_image, cmap='gray')
         plt.title("Extracted Word Image")
         plt.axis('on')  # Keep the box
         plt.xticks([])  # Remove x-axis ticks
         plt.yticks([])  # Remove y-axis ticks
         plt.show()
 
-        plt.imshow(self.get_rendered_word_image(), cmap='gray')
+        plt.imshow(self.extracted_edge_map, cmap='gray')
+        plt.title("Extracted Word Edge Map")
+        plt.axis('on')  # Keep the box
+        plt.xticks([])  # Remove x-axis ticks
+        plt.yticks([])  # Remove y-axis ticks
+        plt.show()
+
+        plt.imshow(self.rendered_image, cmap='gray')
         plt.title("Rendered Word Image")
         plt.axis('on')  # Keep the box
         plt.xticks([])  # Remove x-axis ticks
         plt.yticks([])  # Remove y-axis ticks
         plt.show()
+
+        plt.imshow(self.rendered_edge_map, cmap='gray')
+        plt.title("Rendered Word Edge Map")
+        plt.axis('on')  # Keep the box
+        plt.xticks([])  # Remove x-axis ticks
+        plt.yticks([])  # Remove y-axis ticks
+        plt.show()
+        
+    def compute_similarity_scores(self):
+        """
+        Computes the similarity scores for the word.
+        """
+        # Metrics on original image
+        self.projection_similarity = self._projection_histogram_similarity(self.extracted_image, self.rendered_image, self.projection_bin_width)
+        self.hu_similarity = self._hu_similarity(self.extracted_image, self.rendered_image)
+        self.jaccard_similarity = self._jaccard_similarity(self.extracted_image, self.rendered_image)
+
+        # Metrics on extracted edges
+        self.chamfer_similarity = self._robust_chamfer_similarity(self.extracted_edge_map, self.rendered_edge_map)
+        self.chamfer_dispersion_similarity = min(self._chamfer_dispersion_similarity(self.extracted_edge_map, self.rendered_edge_map),
+                                                self._chamfer_dispersion_similarity(self.rendered_edge_map, self.extracted_edge_map))
+
+    def get_distance_scores(self) -> dict:
+        """
+        Returns the distance scores for the word as a dictionary.
+
+        Returns:
+            dict: A dictionary containing the similarity scores.
+        """
+        if self.projection_similarity is None:
+            self.compute_similarity_scores()
+
+        return {"projection_similarity": self.projection_similarity, 
+                "hu_similarity": self.hu_similarity, 
+                "jaccard_similarity": self.jaccard_similarity, 
+                "chamfer_similarity": self.chamfer_similarity,
+                "chamfer_dispersion_similarity": self.chamfer_dispersion_similarity}
 
 
 class ParagraphProcessor:
@@ -458,50 +505,3 @@ class DocumentProcessor(Document):
         """
         super().__init__(pdf_path, json_path)
 
-
-class WordScorer(SimilarityAlgorithms):
-    """
-    A class for scoring the similarity of two word images based on their projection histograms and Hu Moments.
-    """
-    def __init__(self, 
-                 extracted_image: np.ndarray, 
-                 rendered_image: np.ndarray, 
-                 edge_map_method: str = 'canny',
-                 projection_bin_width: int = 4):
-        """
-        Initialize the SimilarityAlgorithms with two images.
-        
-        Args:
-            extracted_image: numpy array of the extracted word image.
-            rendered_image: numpy array of the rendered word image.
-            edge_map_method: method for extracting the edge map ('canny' or 'sobel').
-            projection_bin_width: width of the bins for the projection histograms.
-        """
-        super().__init__()
-        self.extracted_image = self._convert_to_binary(extracted_image)
-        self.rendered_image = self._convert_to_binary(rendered_image)
-        self.edge_map_method = edge_map_method
-        self.projection_bin_width = projection_bin_width
-
-        self.extracted_edge_map = self._extract_edge_map(self.extracted_image)
-        self.rendered_edge_map = self._extract_edge_map(self.rendered_image)
-
-
-        ### TODO: Actually run the scoring algorithms.
-
-    def get_distance_scores(self) -> tuple[float, float, float]:
-        """
-        Returns the distance scores for the word.
-
-        Returns:
-            tuple: (projection_distance_height, projection_distance_width, hu_distance)
-        """
-        return self.projection_distance_height, self.projection_distance_width, self.hu_distance
-
-    def get_distance_scores_as_dict(self) -> dict:
-        """
-        Returns the distance scores for the word as a dictionary.
-        """
-        return {"projection_distance_height": self.projection_distance_height, 
-                "projection_distance_width": self.projection_distance_width, 
-                "hu_distance": self.hu_distance}
