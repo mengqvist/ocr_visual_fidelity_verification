@@ -49,6 +49,40 @@ class ImageColorAlgorithms:
         """
         return cv2.threshold(image, 127, 255, cv2.THRESH_BINARY)[1]
 
+    def _extract_edge_map(self, image: np.ndarray, method: str = 'canny') -> np.ndarray:
+        """
+        Extracts an edge map from a binary or grayscale image.
+        Assumes that the text is black on white.
+        
+        Args:
+            image (numpy.ndarray): Input image.
+            method (str): Edge detection method ('canny' or 'sobel').
+        
+        Returns:
+            numpy.ndarray: Edge map as a binary image.
+        """
+        # Ensure the image is grayscale
+        if len(image.shape) == 3:
+            image = self._convert_to_grayscale(image)
+        else:
+            image = image.copy()
+
+        # Convert to binary
+        binary = self._convert_to_binary(image)
+        
+        # Apply the edge detection
+        if method == 'canny':
+            edges = cv2.Canny(binary, 100, 200)
+        elif method == 'sobel':
+            grad_x = cv2.Sobel(binary, cv2.CV_64F, 1, 0, ksize=3)
+            grad_y = cv2.Sobel(binary, cv2.CV_64F, 0, 1, ksize=3)
+            edges = cv2.magnitude(grad_x, grad_y)
+            edges = np.uint8(edges / np.max(edges) * 255)  # Normalize to 0-255
+        else:
+            raise ValueError("Invalid method. Use 'canny' or 'sobel'.")
+        
+        return edges
+
 
 class ImageDegradationAlgorithms(ImageColorAlgorithms):
     """
@@ -156,6 +190,8 @@ class ImageDegradationAlgorithms(ImageColorAlgorithms):
 class ImageSimilarityAlgorithms(ImageColorAlgorithms):
     """
     A class for image similarity algorithms.
+    All similarity metrics return a similarity score between 0 and 1,
+    where 1 indicates perfect similarity.
     """
     def __init__(self):
         """
@@ -163,88 +199,7 @@ class ImageSimilarityAlgorithms(ImageColorAlgorithms):
         """
         super().__init__()
 
-    def _extract_edge_map(self, image: np.ndarray, method: str = 'canny') -> np.ndarray:
-        """
-        Extracts an edge map from a binary or grayscale image.
-        Assumes that the text is black on white.
-        
-        Args:
-            image (numpy.ndarray): Input image.
-            method (str): Edge detection method ('canny' or 'sobel').
-        
-        Returns:
-            numpy.ndarray: Edge map as a binary image.
-        """
-        # Ensure the image is grayscale
-        if len(image.shape) == 3:
-            image = self._convert_to_grayscale(image)
-        else:
-            image = image.copy()
-
-        # Convert to binary
-        binary = self._convert_to_binary(image)
-        
-        # Apply the edge detection
-        if method == 'canny':
-            edges = cv2.Canny(binary, 100, 200)
-        elif method == 'sobel':
-            grad_x = cv2.Sobel(binary, cv2.CV_64F, 1, 0, ksize=3)
-            grad_y = cv2.Sobel(binary, cv2.CV_64F, 0, 1, ksize=3)
-            edges = cv2.magnitude(grad_x, grad_y)
-            edges = np.uint8(edges / np.max(edges) * 255)  # Normalize to 0-255
-        else:
-            raise ValueError("Invalid method. Use 'canny' or 'sobel'.")
-        
-        return edges
-
-    def _hausdorff_distance(self, image1: np.ndarray, image2: np.ndarray) -> float:
-        """
-        Computes the Hausdorff distance between two binary images.
-        
-        Args:
-            image1 (numpy.ndarray): First binary image.
-            image2 (numpy.ndarray): Second binary image.
-        
-        Returns:
-            float: Hausdorff distance.
-        """
-        points1 = np.column_stack(np.where(image1 == 0))
-        points2 = np.column_stack(np.where(image2 == 0))
-        
-        if len(points1) == 0 or len(points2) == 0:
-            return float('inf')  # Avoid empty input causing errors
-        
-        # Compute directed Hausdorff distances between black pixel coordinates
-        hausdorff_1 = directed_hausdorff(points1, points2)[0]
-        hausdorff_2 = directed_hausdorff(points2, points1)[0]
-        
-        return max(hausdorff_1, hausdorff_2)
-
-    def _jaccard_similarity(self, image1: np.ndarray, image2: np.ndarray) -> float:
-        """
-        Computes the Jaccard similarity between two binary images.
-        
-        Args:
-            image1 (numpy.ndarray): First binary image.
-            image2 (numpy.ndarray): Second binary image.
-        
-        Returns:
-            float: Jaccard similarity score (closer to 1 means more similar).
-        """
-        # Convert to binary 
-        binary1 = self._convert_to_binary(image1)
-        binary2 = self._convert_to_binary(image2)
-
-        # Compute the intersection and union of the two binary images
-        intersection = np.logical_and(binary1 == 0, binary2 == 0).sum()
-        union = np.logical_or(binary1 == 0, binary2 == 0).sum()
-        
-        if union == 0:
-            return 0.0  # Avoid division by zero
-        
-        return intersection / union
-
-    def _compute_projection_histogram(self, image: np.ndarray, bin_width: int = 4) -> tuple[np.ndarray, np.ndarray]:
+    def _projection_histogram(self, image: np.ndarray, bin_width: int = 4) -> tuple[np.ndarray, np.ndarray]:
         """
         Computes normalized vertical and horizontal projection histograms by summing pixel intensities
         using a fixed bin width.
@@ -256,18 +211,18 @@ class ImageSimilarityAlgorithms(ImageColorAlgorithms):
         Histograms are normalized to sum to 1.
         
         Parameters:
-        image (ndarray): Grayscale image.
-        bin_width (int): Width (in pixels) of each bin for the vertical and horizontal projections.
+            image (ndarray): Grayscale image.
+            bin_width (int): Width (in pixels) of each bin for the vertical and horizontal projections.
         
         Returns:
-        tuple: (vertical_hist, horizontal_hist) as 1D numpy arrays.
+            tuple: (vertical_hist, horizontal_hist) as 1D numpy arrays.
         """
         if len(image.shape) == 3:
             image = self._convert_to_grayscale(image)
         else:
             image = image.copy()
 
-        # convert to binary
+        # Convert to binary
         binary = self._convert_to_binary(image)
 
         # Compute the vertical projection (sum over rows for each column)
@@ -296,7 +251,7 @@ class ImageSimilarityAlgorithms(ImageColorAlgorithms):
         
         return vertical_hist, horizontal_hist
 
-    def _compute_hu_moments(self, image: np.ndarray) -> np.ndarray:
+    def _hu_moments(self, image: np.ndarray) -> np.ndarray:
         """
         Computes Hu Moments for the input image.
         
@@ -315,6 +270,10 @@ class ImageSimilarityAlgorithms(ImageColorAlgorithms):
         else:
             image = image.copy()
 
+        # If the image is empty, return an array of zeros
+        if np.count_nonzero(image == 0) == 0:
+            return np.zeros(7)
+
         # Calculate moments
         moments = cv2.moments(image)
 
@@ -322,74 +281,171 @@ class ImageSimilarityAlgorithms(ImageColorAlgorithms):
         hu_moments = cv2.HuMoments(moments).flatten()
 
         # Apply log transform to handle large value ranges
-        # Add a small epsilon to avoid log(0)
-        epsilon = 1e-12
+        epsilon = 1e-12  # Avoid log(0)
         hu_moments = -np.sign(hu_moments) * np.log10(np.abs(hu_moments) + epsilon)
 
         return hu_moments
 
-    def _compute_wasserstein_distance(self, hist1: np.ndarray, hist2: np.ndarray) -> float:
+    def _wasserstein_similarity(self, hist1: np.ndarray, hist2: np.ndarray) -> float:
         """
-        Computes the Wasserstein distance between two 1D histograms.
+        Computes the Wasserstein similarity between two 1D histograms.
         
         Both histograms must be normalized to sum to 1.
         The bin positions are assumed to be the bin indices.
+        The similarity is defined as:
+            similarity = 1 / (1 + Wasserstein_distance)
         
         Args:
-            hist1: 1D numpy array representing the first histogram.
-            hist2: 1D numpy array representing the second histogram.
+            hist1 (numpy.ndarray): First normalized histogram.
+            hist2 (numpy.ndarray): Second normalized histogram.
         
         Returns:
-            The Wasserstein distance (a float).
+            float: Wasserstein similarity score between 0 and 1.
         """
         bins = np.arange(len(hist1))
         distance = wasserstein_distance(bins, bins, u_weights=hist1, v_weights=hist2)
-        return distance
+        similarity = 1.0 / (1.0 + distance)
+        return similarity
 
-    def _compute_cosine_distance(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
+    def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         """
-        Computes the cosine distance between two vectors after L2 normalization.
+        Computes the cosine similarity between two vectors after L2 normalization.
         
-        Cosine distance is defined as 1 minus the cosine similarity of the normalized vectors.
+        The raw cosine similarity (dot product of normalized vectors) lies in [-1, 1].
+        We map it to a [0, 1] range by:
+            similarity = (cosine_similarity + 1) / 2
         
         Args:
-            vec1: First vector.
-            vec2: Second vector.
+            vec1 (numpy.ndarray): First vector.
+            vec2 (numpy.ndarray): Second vector.
         
         Returns:
-            Cosine distance (a float). Returns 1.0 if either vector is zero.
+            float: Cosine similarity between 0 and 1. Returns 0 if either vector is zero.
         """
-        # L2 normalize each vector
         norm1 = norm(vec1)
         norm2 = norm(vec2)
         
-        # If either vector is zero, return maximum distance.
         if norm1 == 0 or norm2 == 0:
-            return 1.0
+            return 0.0
 
         vec1_normalized = vec1 / norm1
         vec2_normalized = vec2 / norm2
         
-        # Compute cosine similarity as the dot product of normalized vectors.
         cosine_similarity = np.dot(vec1_normalized, vec2_normalized)
+        similarity = (cosine_similarity + 1) / 2
+        return similarity
+
+    def _hu_similarity(self, image1: np.ndarray, image2: np.ndarray) -> float:
+        """
+        Computes the Hu similarity between two images by comparing their Hu Moments.
+        The similarity is defined as the cosine similarity between the Hu Moments vectors.
+
+        Args:
+            image1 (numpy.ndarray): First image.
+            image2 (numpy.ndarray): Second image.
         
-        # Cosine distance is 1 - cosine similarity.
-        cosine_distance = 1 - cosine_similarity
-        return cosine_distance
+        Returns:
+            float: Hu similarity between 0 and 1.
+        """
+        hu1 = self._hu_moments(image1)
+        hu2 = self._hu_moments(image2)
+        return self._cosine_similarity(hu1, hu2)
 
+    def _projection_histogram_similarity(self, image1: np.ndarray, image2: np.ndarray) -> float:
+        """
+        Computes the projection histogram similarity between two images.
+        The similarity is defined as the average of the wasserstein similarities between the projection histograms.
+        """
+        hist1_vertical, hist1_horizontal = self._projection_histogram(image1)
+        hist2_vertical, hist2_horizontal = self._projection_histogram(image2)
+        return (self._wasserstein_similarity(hist1_vertical, hist2_vertical) + self._wasserstein_similarity(hist1_horizontal, hist2_horizontal)) / 2
 
-# def robust_chamfer_distance(img1, img2, percentile=90):
-#     """Computes a robust Chamfer distance by using a trimmed percentile."""
-#     img1 = cv2.threshold(img1, 127, 255, cv2.THRESH_BINARY)[1]
-#     img2 = cv2.threshold(img2, 127, 255, cv2.THRESH_BINARY)[1]
-    
-#     dt = cv2.distanceTransform(255 - img2, cv2.DIST_L2, 5)
-    
-#     y_coords, x_coords = np.where(img1 > 0)
-#     sampled_distances = dt[y_coords, x_coords]
-    
-#     # Use a percentile-based approach to reduce outlier influence
-#     return np.percentile(sampled_distances, percentile)
+    def _robust_chamfer_similarity(self, image1: np.ndarray, image2: np.ndarray, percentile: int = 95) -> float:
+        """
+        Computes a robust Chamfer similarity by using a trimmed percentile.
+        The underlying distance is converted to similarity as:
+            similarity = 1 / (1 + distance)
+        
+        Args:
+            image1 (numpy.ndarray): First image.
+            image2 (numpy.ndarray): Second image.
+            percentile (int): Percentile to use for trimming.
+        
+        Returns:
+            float: Robust Chamfer similarity score between 0 and 1.
+        """
+        # Convert to binary if needed
+        if len(image1.shape) == 3 or len(image2.shape) == 3:
+            image1 = self._convert_to_binary(image1)
+            image2 = self._convert_to_binary(image2)
+        else:
+            image1 = image1.copy()
+            image2 = image2.copy()
+                
+        # If image2 has no foreground (i.e. no black pixels), return 0 similarity.
+        if np.count_nonzero(image2 == 0) == 0:
+            return 0.0
 
-# distance = robust_chamfer_distance(img1, img2, percentile=90)
-# print("Robust Chamfer Distance:", distance)
+        # Use foreground pixels (value == 0) from image1 for distance sampling.
+        y_coords, x_coords = np.where(image1 == 0)
+        if len(y_coords) == 0:
+            return 0.0
+
+        dt = cv2.distanceTransform(255 - image2, cv2.DIST_L2, 5)
+        sampled_distances = dt[y_coords, x_coords]
+        distance = np.percentile(sampled_distances, percentile)
+        similarity = 1.0 / (1.0 + distance)
+        return similarity
+
+    def _hausdorff_similarity(self, image1: np.ndarray, image2: np.ndarray) -> float:
+        """
+        Computes the Hausdorff similarity between two binary images.
+        The similarity is defined as:
+            similarity = 1 / (1 + Hausdorff_distance)
+        so that a distance of 0 maps to a similarity of 1.
+        If one image contains no black pixels, returns 0.
+        
+        Args:
+            image1 (numpy.ndarray): First binary image.
+            image2 (numpy.ndarray): Second binary image.
+        
+        Returns:
+            float: Hausdorff similarity between 0 and 1.
+        """
+        points1 = np.column_stack(np.where(image1 == 0))
+        points2 = np.column_stack(np.where(image2 == 0))
+        
+        if len(points1) == 0 or len(points2) == 0:
+            return 0.0  # No comparable features
+        
+        # Compute directed Hausdorff distances between black pixel coordinates
+        d1 = directed_hausdorff(points1, points2)[0]
+        d2 = directed_hausdorff(points2, points1)[0]
+        distance = max(d1, d2)
+        similarity = 1.0 / (1.0 + distance)
+        return similarity
+
+    def _jaccard_similarity(self, image1: np.ndarray, image2: np.ndarray) -> float:
+        """
+        Computes the Jaccard similarity between two binary images.
+        
+        Args:
+            image1 (numpy.ndarray): First binary image.
+            image2 (numpy.ndarray): Second binary image.
+        
+        Returns:
+            float: Jaccard similarity score between 0 and 1 (closer to 1 means more similar).
+        """
+        # Convert to binary 
+        binary1 = self._convert_to_binary(image1)
+        binary2 = self._convert_to_binary(image2)
+
+        # Compute the intersection and union of the two binary images
+        intersection = np.logical_and(binary1 == 0, binary2 == 0).sum()
+        union = np.logical_or(binary1 == 0, binary2 == 0).sum()
+        
+        if union == 0:
+            return 0.0  # Avoid division by zero
+        
+        return intersection / union
+    
