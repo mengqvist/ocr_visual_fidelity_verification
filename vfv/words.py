@@ -63,24 +63,30 @@ class ImageAlgorithms:
     def _extract_edge_map(self, image: np.ndarray, method: str = 'canny') -> np.ndarray:
         """
         Extracts an edge map from a binary or grayscale image.
+        Assumes that the text is black on white.
         
         Args:
             image (numpy.ndarray): Input image.
             method (str): Edge detection method ('canny' or 'sobel').
         
         Returns:
-            numpy.ndarray: Edge map image.
+            numpy.ndarray: Edge map as a binary image.
         """
+        # Ensure the image is grayscale
         if len(image.shape) == 3:
             image = self._convert_to_grayscale(image)
         else:
             image = image.copy()
+
+        # Convert to binary
+        binary = self._convert_to_binary(image)
         
+        # Apply the edge detection
         if method == 'canny':
-            edges = cv2.Canny(image, 100, 200)
+            edges = cv2.Canny(binary, 100, 200)
         elif method == 'sobel':
-            grad_x = cv2.Sobel(image, cv2.CV_64F, 1, 0, ksize=3)
-            grad_y = cv2.Sobel(image, cv2.CV_64F, 0, 1, ksize=3)
+            grad_x = cv2.Sobel(binary, cv2.CV_64F, 1, 0, ksize=3)
+            grad_y = cv2.Sobel(binary, cv2.CV_64F, 0, 1, ksize=3)
             edges = cv2.magnitude(grad_x, grad_y)
             edges = np.uint8(edges / np.max(edges) * 255)  # Normalize to 0-255
         else:
@@ -91,6 +97,7 @@ class ImageAlgorithms:
     def _smudge(self, image: np.ndarray, distance_threshold: float = 1.5) -> np.ndarray:
         """
         Apply a distance-based smudging for natural-looking text degradation.
+        Assumes that the text is black on white.
         
         Args:
             image (numpy.ndarray): The image to smudge.
@@ -116,13 +123,12 @@ class ImageAlgorithms:
         # Create output binary image (black text on white background)
         smudged = np.ones_like(binary) * 255
         smudged[dist <= distance_threshold] = 0
-        
-        # Convert back to RGB to match input format
-        return self._convert_gray_to_rgb(smudged)
+        return smudged
 
     def _fade(self, image: np.ndarray, distance_threshold: float = 1.5) -> np.ndarray:
         """
         Apply a distance-based fade for more natural text degradation.
+        Assumes that the text is black on white.
 
         Args:
             image (numpy.ndarray): The image to fade.
@@ -143,16 +149,19 @@ class ImageAlgorithms:
 
         # Apply the fade
         faded = self._smudge(inverted_image, distance_threshold)
-        
-        # Convert back to RGB to match input format
-        return self._convert_gray_to_rgb(faded)
+        return faded
 
     def _remove_specks(self, image: np.ndarray, min_size: int = 30) -> np.ndarray:
         """
         Remove small islands (connected components) of black pixels from the image.
+        Assumes that the text is black on white.
         
         Args:
+            image (numpy.ndarray): The image to remove specks from.
             min_size: Minimum size (in pixels) for a connected component to be kept
+
+        Returns:
+            numpy.ndarray: The image in binary format with specks removed.
         """
         # Make sure image is grayscale
         if len(image.shape) == 3:
@@ -178,9 +187,7 @@ class ImageAlgorithms:
             if stats[i, cv2.CC_STAT_AREA] >= min_size:
                 # This component is large enough to keep
                 output[labels == i] = 0
-        
-        # Convert back to RGB
-        return self._convert_gray_to_rgb(output)
+        return output
 
 
 class WordImage(ImageAlgorithms):
@@ -803,14 +810,14 @@ class WordPairProcessor:
         """
         Shows the extracted and rendered word images.
         """
-        plt.imshow(self.get_extracted_word_image())
+        plt.imshow(self.get_extracted_word_image(), cmap='gray')
         plt.title("Extracted Word Image")
         plt.axis('on')  # Keep the box
         plt.xticks([])  # Remove x-axis ticks
         plt.yticks([])  # Remove y-axis ticks
         plt.show()
 
-        plt.imshow(self.get_rendered_word_image())
+        plt.imshow(self.get_rendered_word_image(), cmap='gray')
         plt.title("Rendered Word Image")
         plt.axis('on')  # Keep the box
         plt.xticks([])  # Remove x-axis ticks
