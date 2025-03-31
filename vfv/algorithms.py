@@ -86,6 +86,28 @@ class ImageColorAlgorithms:
 
         return edges
 
+    def _calculate_centroid(self, image: np.ndarray) -> tuple[float, float]:
+        """
+        Calculate the centroid (center of mass) of the image data points.
+        Assumes that the text is black on white.
+        
+        Args:
+            image (numpy.ndarray): The image to calculate the centroid of.
+        
+        Returns:
+            tuple: Tuple (x_centroid, y_centroid) representing the centre of mass of the image.
+        """
+        # Find indices of black pixels (0 values)
+        y_indices, x_indices = np.where(image == 0)
+            
+        if x_indices.size == 0 or y_indices.size == 0:
+            raise ValueError("No black pixels found in the image.")
+
+        # Calculate the centroid
+        x_centroid = np.mean(x_indices)
+        y_centroid = np.mean(y_indices)
+        
+        return x_centroid, y_centroid
 
 class ImageDegradationAlgorithms(ImageColorAlgorithms):
     """

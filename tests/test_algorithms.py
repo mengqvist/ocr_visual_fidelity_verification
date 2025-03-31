@@ -67,6 +67,32 @@ def test_extract_edge_map_sobel(color_alg):
     assert edges.dtype == np.uint8
     assert edges.min() >= 0 and edges.max() <= 255
 
+def test_calculate_centroid(similarity_alg):
+    # Test 1: Single black pixel
+    img = np.full((100, 100), 255, dtype=np.uint8)
+    img[50, 50] = 0  # black pixel at (50,50)
+    centroid = similarity_alg._calculate_centroid(img)
+    # Expect centroid at (50, 50)
+    assert np.isclose(centroid[0], 50)
+    assert np.isclose(centroid[1], 50)
+
+    # Test 2: Multiple black pixels
+    img2 = np.full((100, 100), 255, dtype=np.uint8)
+    # Set black pixels at (10,10), (20,20), (30,30)
+    img2[10, 10] = 0
+    img2[20, 20] = 0
+    img2[30, 30] = 0
+    centroid2 = similarity_alg._calculate_centroid(img2)
+    # Expected centroid is (20,20) (mean of 10,20,30)
+    assert np.isclose(centroid2[0], 20)
+    assert np.isclose(centroid2[1], 20)
+
+    # Test 3: No black pixels (all white)
+    img3 = np.full((100, 100), 255, dtype=np.uint8)
+    # Should raise ValueError when there are no foreground pixels
+    with pytest.raises(ValueError, match="No black pixels found in the image."):
+        similarity_alg._calculate_centroid(img3)
+
 
 ### Degradation Algorithms
 def test_smudge(degradation_alg):
