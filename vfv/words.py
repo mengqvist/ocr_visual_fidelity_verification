@@ -77,6 +77,10 @@ class WordImage(ImageDegradationAlgorithms):
         Returns:
             np.ndarray: The current image.
         """
+        # convert to binary, if not already
+        if self.image.ndim == 3:
+            self.image = self._convert_to_binary(self.image)
+        print(f"Image shape: {self.image.shape}")
         return self.image
 
     def set_modified_image(self, image: np.ndarray):
@@ -86,6 +90,9 @@ class WordImage(ImageDegradationAlgorithms):
         Args:
             image (np.ndarray): The image to set.
         """
+        # convert to binary, if not already
+        if image.ndim == 3:
+            image = self._convert_to_binary(image)
         self.modified_image = image
 
     def get_modified_image(self) -> np.ndarray:
@@ -171,7 +178,7 @@ class WordImageRenderer(WordImage):
     """
     A class for rendering a word as an image of the same size as the polygon.
     """
-    def __init__(self, word: str, width: int, height: int, typeface: str):
+    def __init__(self, word: str, width: int, height: int, typeface: str, centroid: tuple[float, float]=None, smudge: float=0):
         """
         Initialize the WordImageRenderer with word and polygon details.
 
@@ -180,6 +187,8 @@ class WordImageRenderer(WordImage):
             width (int): The width of the image, in pixels.
             height (int): The height of the image, in pixels.
             typeface (str): The typeface to use for the rendered image.
+            centroid (tuple[float, float]): The centroid of the image, in pixels (x,y). Defaults to None.
+            smudge (float): The amount to smudge the image, in pixels. Defaults to 0.
         """
         super().__init__()
         self.word = word
@@ -187,6 +196,19 @@ class WordImageRenderer(WordImage):
         self.height = height
         self.typeface = typeface
         self.kernel_size = 5
+        self.centroid = centroid
+        self.smudge = smudge
+
+        if not isinstance(self.smudge, (int, float)):
+            raise ValueError("Smudge must be a number.")
+
+        if self.centroid is not None:
+            # Ensure centroids are integers and within image bounds
+            x_centroid, y_centroid = self.centroid
+            assert isinstance(x_centroid, (int, float)), "x_centroid must be numeric"
+            assert isinstance(y_centroid, (int, float)), "y_centroid must be numeric"
+            assert 0 <= x_centroid <= self.width, f"x_centroid {x_centroid} must be between 0 and {self.width}"
+            assert 0 <= y_centroid <= self.height, f"y_centroid {y_centroid} must be between 0 and {self.height}"
 
         # Assemble paths to the fonts.
         self.font_paths = {
@@ -229,42 +251,151 @@ class WordImageRenderer(WordImage):
         except IOError:
             raise IOError(f"Font {self.typeface} not found.")
 
-    def _render_word_image(self) -> np.ndarray:
+    # def _render_word_image(self) -> np.ndarray:
+    #     """
+    #     Render a word as an image with the size of the polygon.
+        
+    #     The rendered word is centered within the bounding box defined by the polygon.
+    #     The function dynamically adjusts the font size so that the text fits within the image,
+    #     and it uses a fallback font if the primary one is not available.
+        
+    #     Returns:
+    #         A numpy array of the image with the rendered word.
+    #     """
+    #     # Create a blank grayscale image with a white background.
+    #     rendered_img = Image.new("RGB", (self.width, self.height), color='white')
+    #     draw = ImageDraw.Draw(rendered_img)
+
+    #     # Start with the maximum possible font size (e.g., the image height).
+    #     font_size = self.height + 10
+    #     font = self._load_font(font_size)
+        
+    #     # Measure the text size.
+    #     text_width, text_height = draw.textbbox((0, 0), self.word, font=font)[2:]
+        
+    #     # Decrease the font size until the text fits inside the bounding box.
+    #     while (text_width > self.width or text_height > self.height) and font_size > 1:
+    #         font_size -= 1
+    #         font = self._load_font(font_size)
+    #         text_width, text_height = draw.textbbox((0, 0), self.word, font=font)[2:]
+        
+    #     # Draw the text in black.
+    #     draw.text((self.width // 2, self.height // 2), self.word, fill='black', font=font, anchor='mm')
+        
+    #     # convert to numpy array
+    #     rendered_img = np.array(rendered_img)
+        
+    #     self.set_image(rendered_img)
+        
+    def _get_text_width_height(self, rendered_np: np.ndarray) -> tuple[int, int]:
         """
-        Render a word as an image with the size of the polygon.
-        
-        The rendered word is centered within the bounding box defined by the polygon.
-        The function dynamically adjusts the font size so that the text fits within the image,
-        and it uses a fallback font if the primary one is not available.
-        
+        Get the width and height of the black pixels (text) in the rendered image.
+
         Returns:
-            A numpy array of the image with the rendered word.
+            tuple[int, int]: The width and height of the bounding box that contains all black pixels.
         """
-        # Create a blank grayscale image with a white background.
-        rendered_img = Image.new("RGB", (self.width, self.height), color='white')
+        # convert to to binary
+        rendered_np = self._convert_to_binary(rendered_np)
+
+        # Find the coordinates where pixels are black (0)
+        y_indices, x_indices = np.where(rendered_np == 0)
+        
+        # If there are no black pixels, return 0,0
+        if x_indices.size == 0 or y_indices.size == 0:
+            return 0, 0
+        
+        # Compute bounding box coordinates
+        x_min, x_max = np.min(x_indices), np.max(x_indices)
+        y_min, y_max = np.min(y_indices), np.max(y_indices)
+        
+        # Width and height of the bounding box (add 1 if you want to count inclusive pixels)
+        width = x_max - x_min + 1
+        height = y_max - y_min + 1
+        
+        return width, height
+
+
+    def _write_text(self, 
+                    canvas_width: int,
+                    canvas_height: int,
+                    font: ImageFont.FreeTypeFont, 
+                    text: str, 
+                    anchor: str='mm'):
+        """
+        Write text to an image. Add smudge or fade if requested.
+        """
+        # create a blank image
+        canvas_center = (canvas_width // 2, canvas_height // 2)
+        rendered_img = Image.new("RGB", (canvas_width, canvas_height), color='white')
         draw = ImageDraw.Draw(rendered_img)
 
-        # Start with the maximum possible font size (e.g., the image height).
-        font_size = self.height + 10
+        # write the text
+        draw.text(canvas_center, text, fill='black', font=font, anchor=anchor)
+        
+        # Convert the rendered image to a NumPy array.
+        rendered_np = np.array(rendered_img)
+
+        # apply smudge or fade if requested
+        if self.smudge > 0:
+            rendered_np = self._smudge(rendered_np, self.smudge)
+        elif self.smudge < 0:
+            rendered_np = self._fade(rendered_np, self.smudge)
+
+        return rendered_np
+
+    def _render_word_image(self) -> np.ndarray:
+        """
+        Render a word in an image and align its center of mass with the target centroid.
+        
+        1. Create a canvas of size (2*self.width, 2*self.height) with a white background.
+        2. Render the word (with dynamically adjusted font size) centered on the canvas.
+        3. Compute the center of mass of the rendered text using _calculate_centroid.
+        4. Crop a region of size (self.width, self.height) such that the rendered centroid is 
+        placed at self.centroid (target x, y).
+        
+        Returns:
+            Cropped image as a numpy array.
+        """
+        # Step 1: Specify a large canvas.
+        canvas_width, canvas_height = 2 * self.width, 2 * self.height
+                
+        # Step 2: Render a first version of the text and get its width and height.
+        font_size = self.height + 2
         font = self._load_font(font_size)
-        
-        # Measure the text size.
-        text_width, text_height = draw.textbbox((0, 0), self.word, font=font)[2:]
-        
-        # Decrease the font size until the text fits inside the bounding box.
+        rendered_np = self._write_text(canvas_width, canvas_height, font, self.word)
+        text_width, text_height = self._get_text_width_height(rendered_np)
+
+        # Decrease font size until text fits within self.width x self.height.
         while (text_width > self.width or text_height > self.height) and font_size > 1:
             font_size -= 1
             font = self._load_font(font_size)
-            text_width, text_height = draw.textbbox((0, 0), self.word, font=font)[2:]
+            rendered_np = self._write_text(canvas_width, canvas_height, font, self.word)
+            text_width, text_height = self._get_text_width_height(rendered_np)
         
-        # Draw the text in black.
-        draw.text((self.width // 2, self.height // 2), self.word, fill='black', font=font, anchor='mm')
+        # Step 3: Calculate the center of mass from the rendered image.
+        # Convert to grayscale for the centroid calculation.
+        rendered_gray = self._convert_to_grayscale(rendered_np)  # convert to grayscale
+        rendered_centroid = self._calculate_centroid(rendered_gray)  # returns (x, y)
+              
+        # Step 4: Compute crop coordinates so that the rendered centroid aligns with self.centroid.
+        if self.centroid is None:
+            target_x, target_y = canvas_width // 2, canvas_height // 2
+        else:
+            target_x, target_y = self.centroid
+        rx, ry = rendered_centroid         # computed center of mass in the large image
+
+        # Determine top-left corner of crop: we want rx to end up at target_x, and ry at target_y.
+        crop_x = int(rx - target_x)
+        crop_y = int(ry - target_y)
         
-        # convert to numpy array
-        rendered_img = np.array(rendered_img)
+        # Ensure the crop stays within the canvas boundaries.
+        crop_x = max(0, min(crop_x, canvas_width - self.width))
+        crop_y = max(0, min(crop_y, canvas_height - self.height))
         
-        self.set_image(rendered_img)
-      
+        cropped_img = rendered_np[crop_y:crop_y + self.height, crop_x:crop_x + self.width]
+        
+        self.set_image(cropped_img)
+
     def smudge(self, distance_threshold: float = 1.5):
         """
         Apply a distance-based smudging for natural-looking text degradation.
@@ -328,18 +459,28 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         self.smudge = smudge
         self.debug = debug
         self.edge_map_method = edge_map_method
+
+        # get the extracted image
         self.extract_obj = WordImageExtractor(pdf_path=self.pdf_path, 
                                               page_number=self.page_number, 
                                               bounding_box=self.bounding_box)
         
-        self.render_obj = WordImageRenderer(word=self.word, 
-                                            width=self.extract_obj.get_width(), 
-                                            height=self.extract_obj.get_height(),
-                                            typeface=self.typeface)
-
+        # denoise if requested
         if self.denoise:
             self.extract_obj.remove_specks()
 
+        # get the centroid of the extracted image
+        centroid = self._calculate_centroid(self.extract_obj.get_image())
+        print(f"Centroid of extracted image: {centroid}")
+
+        # get the rendered image
+        self.render_obj = WordImageRenderer(word=self.word, 
+                                            width=self.extract_obj.get_width(), 
+                                            height=self.extract_obj.get_height(),
+                                            typeface=self.typeface,
+                                            centroid=self._calculate_centroid(self.extract_obj.get_image()))
+
+        # apply smudge or fade if requested
         if self.smudge > 0:
             self.render_obj.smudge(distance_threshold=self.smudge)
         elif self.smudge < 0:

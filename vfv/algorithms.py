@@ -23,7 +23,8 @@ class ImageColorAlgorithms:
         Returns:
             numpy.ndarray: The grayscale image.
         """
-        return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        # detect whether the image is BGR or RGB
+        return cv2.cvtColor(image.copy(), cv2.COLOR_BGR2GRAY)
 
     def _convert_gray_to_rgb(self, image: np.ndarray) -> np.ndarray:
         """
@@ -47,6 +48,12 @@ class ImageColorAlgorithms:
         Returns:
             numpy.ndarray: The binary image.
         """
+        # convert to grayscale, if not already
+        if len(image.shape) == 3:
+            image = self._convert_to_grayscale(image)
+        else:
+            image = image.copy()
+
         return cv2.threshold(image, 127, 255, cv2.THRESH_BINARY)[1]
 
     def _extract_edge_map(self, image: np.ndarray, method: str = 'canny') -> np.ndarray:
@@ -103,9 +110,9 @@ class ImageColorAlgorithms:
         if x_indices.size == 0 or y_indices.size == 0:
             raise ValueError("No black pixels found in the image.")
 
-        # Calculate the centroid
-        x_centroid = np.mean(x_indices)
-        y_centroid = np.mean(y_indices)
+        # Calculate the centroid (using median to make it more robust to outliers)
+        x_centroid = np.median(x_indices)
+        y_centroid = np.median(y_indices)
         
         return x_centroid, y_centroid
 
