@@ -2,11 +2,20 @@
 
 A tool for verifying and improving the quality of OCR results from degraded machine-typed documents. This project focuses on post-processing OCR data to reduce the need for manual validation by identifying potential errors and providing quality scores.
 
+
+
 ## Features
 
 - **JSON Parsing**: Parse Azure Document Intelligence JSON format maintaining original structure
 - **Quality Verification**: Multiple methods to verify OCR quality without ground truth
 - **Visualization**: Overlay quality indicators on original document
+
+## Example
+
+Here's an example of how the tool visualizes a rendered version that matches a degraded word extracted from the PDF:
+
+![Example Word Visualization](images/example_word.png)
+
 
 ## Installation
 
@@ -53,6 +62,8 @@ ocr-verification/
 │   ├── Elite.ttf
 │   ├── Pica.ttf
 │   └── ....
+├── images/
+│   └── example_word.png
 ├── vfv/
 │   ├── __init__.py
 │   ├── helpers.py
