@@ -23,8 +23,13 @@ class ImageColorAlgorithms:
         Returns:
             numpy.ndarray: The grayscale image.
         """
-        # detect whether the image is BGR or RGB
-        return cv2.cvtColor(image.copy(), cv2.COLOR_BGR2GRAY)
+        if len(image.shape) == 2:
+            # already grayscale
+            return image.copy()
+        elif image.shape[2] == 3 or image.shape[2] == 4:
+            return cv2.cvtColor(image.copy(), cv2.COLOR_BGR2GRAY)
+        else:
+            raise ValueError(f"Unsupported number of channels: {image.shape}")
 
     def _convert_gray_to_rgb(self, image: np.ndarray) -> np.ndarray:
         """
@@ -96,7 +101,8 @@ class ImageColorAlgorithms:
     def _calculate_centroid(self, image: np.ndarray) -> tuple[float, float]:
         """
         Calculate the centroid (center of mass) of the image data points.
-        Assumes that the text is black on white.
+        Assumes that the text is black on white. Returns the centroid of the black pixels.
+        If no black pixels are found, it returns the center of the image.
         
         Args:
             image (numpy.ndarray): The image to calculate the centroid of.
@@ -108,7 +114,7 @@ class ImageColorAlgorithms:
         y_indices, x_indices = np.where(image == 0)
             
         if x_indices.size == 0 or y_indices.size == 0:
-            raise ValueError("No black pixels found in the image.")
+            return (int(image.shape[1]/2), int(image.shape[0]/2))
 
         # Calculate the centroid (using median to make it more robust to outliers)
         x_centroid = np.median(x_indices)

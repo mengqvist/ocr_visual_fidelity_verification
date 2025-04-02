@@ -7,7 +7,10 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 from dotenv import load_dotenv, find_dotenv
 from vfv.algorithms import ImageSimilarityAlgorithms, ImageColorAlgorithms, ImageDegradationAlgorithms
+from config import TYPEFACE_PATHS   
 
+
+print(TYPEFACE_PATHS)
 
 PROJECT_ROOT = os.path.dirname(find_dotenv())
 
@@ -178,7 +181,7 @@ class WordImageRenderer(WordImage):
     """
     A class for rendering a word as an image of the same size as the polygon.
     """
-    def __init__(self, word: str, width: int, height: int, typeface: str, centroid: tuple[float, float]=None, smudge: float=0):
+    def __init__(self, word: str, width: int, height: int, font_size: int, typeface: str, smudge: float=0, centroid: tuple[float, float]=None):
         """
         Initialize the WordImageRenderer with word and polygon details.
 
@@ -186,17 +189,22 @@ class WordImageRenderer(WordImage):
             word (str): The text to render.
             width (int): The width of the image, in pixels.
             height (int): The height of the image, in pixels.
+            font_size (int): The font size to use for the rendered image.
             typeface (str): The typeface to use for the rendered image.
-            centroid (tuple[float, float]): The centroid of the image, in pixels (x,y). Defaults to None.
-            smudge (float): The amount to smudge the image, in pixels. Defaults to 0.
+            smudge (float): The amount to smudge the image, in pixels.
+            centroid (tuple[float, float]): The centroid of the image, in pixels (x,y). Optional, defaults to None.
         """
         super().__init__()
         self.word = word
+
+        # dimensions and text position
         self.width = width
         self.height = height
-        self.typeface = typeface
-        self.kernel_size = 5
         self.centroid = centroid
+
+        # text parameters
+        self.font_size = font_size
+        self.typeface = typeface   
         self.smudge = smudge
 
         if not isinstance(self.smudge, (int, float)):
@@ -210,31 +218,71 @@ class WordImageRenderer(WordImage):
             assert 0 <= x_centroid <= self.width, f"x_centroid {x_centroid} must be between 0 and {self.width}"
             assert 0 <= y_centroid <= self.height, f"y_centroid {y_centroid} must be between 0 and {self.height}"
 
-        # Assemble paths to the fonts.
-        self.font_paths = {
-            "courier": os.path.join(PROJECT_ROOT, "fonts", "Courier.ttf"),
-            "elite": os.path.join(PROJECT_ROOT, "fonts", "Elite.ttf"),
-            "letter_gothic": os.path.join(PROJECT_ROOT, "fonts", "LetterGothicNormal.ttf"),
-            "olivetti": os.path.join(PROJECT_ROOT, "fonts", "Olivetti.ttf"),
-            "olympia": os.path.join(PROJECT_ROOT, "fonts", "Olympia.ttf"),
-            "pica": os.path.join(PROJECT_ROOT, "fonts", "Pica.ttf"),
-            "prestige_elite": os.path.join(PROJECT_ROOT, "fonts", "PrestigeElite.ttf"),
-            "remington": os.path.join(PROJECT_ROOT, "fonts", "Remington.ttf"),
-            "underwood": os.path.join(PROJECT_ROOT, "fonts", "Underwood.ttf")
-        }
-        if self.typeface not in self.font_paths:
+        if self.typeface not in TYPEFACE_PATHS:
             raise ValueError(f"Font {self.typeface} not found.")
 
         self._render_word_image()
 
-    def _get_available_fonts(self) -> list[str]:
+    def _validate_text_params(self, text_params: dict):
         """
-        Get the available fonts.
+        Validate the text parameters.
+        """
+        if text_params is None:
+            return True
+        
+        if not isinstance(text_params, dict):
+            raise ValueError("Text parameters must be a dictionary.")
+        
+        if "fontsize" not in text_params:
+            raise ValueError("Font size is required.")
+        
+        if "typeface" not in text_params:
+            raise ValueError("Typeface is required.")
+        
+        if "centroid" not in text_params:
+            raise ValueError("Centroid is required.")
+        
+        if "smudge" not in text_params:
+            raise ValueError("Smudge is required.")
+
+
+        if not isinstance(text_params["fontsize"], (int, float)):
+            raise ValueError("Font size must be a number.")
+        
+        if not isinstance(text_params["typeface"], str):
+            raise ValueError("Typeface must be a string.")
+        
+        if not isinstance(text_params["centroid"], tuple):
+            raise ValueError("Centroid must be a tuple.")
+        
+        if not isinstance(text_params["smudge"], (int, float)):
+            raise ValueError("Smudge must be a number.")
+        
+        if text_params["fontsize"] <= 0:
+            raise ValueError("Font size must be greater than 0.")
+        
+        # if text_params["typeface"] not in []:
+        #     raise 
+
+        if text_params["centroid"][0] < 0 or text_params["centroid"][0] > self.width:
+            raise ValueError("Centroid x must be between 0 and width.")
+        
+        if text_params["centroid"][1] < 0 or text_params["centroid"][1] > self.height:
+            raise ValueError("Centroid y must be between 0 and height.")    
+
+        if text_params["smudge"] < -5 or text_params["smudge"] > 5:
+            raise ValueError("Smudge must be between -5 and 10.")
+        
+        return True          
+
+    def _get_available_typefaces(self) -> list[str]:
+        """
+        Get the available typefaces.
 
         Returns:
             list[str]: A list of the available fonts.
         """
-        return list(self.font_paths.keys())
+        return list(TYPEFACE_PATHS.keys())
 
     def _load_font(self, size: int):
         """
@@ -247,7 +295,7 @@ class WordImageRenderer(WordImage):
             ImageFont: The loaded font.
         """
         try:
-            return ImageFont.truetype(self.font_paths[self.typeface], size)
+            return ImageFont.truetype(TYPEFACE_PATHS[self.typeface], size)
         except IOError:
             raise IOError(f"Font {self.typeface} not found.")
 
@@ -430,9 +478,8 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
                  page_number: int, 
                  bounding_box: list, 
                  word: str, 
-                 typeface: str, 
                  denoise: bool = False,
-                 smudge: float = 1.5,
+                 font_params: dict = None,
                  edge_map_method: str = 'sobel',
                  debug: bool = False):
         """
@@ -443,9 +490,8 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
             page_number: 1-based page number.
             bounding_box: A flat list of floats [x, y, width, height] defining the bounding box.
             word: The text to render.
-            typeface: The typeface to use for the rendered image.
             denoise: If True, denoise the extracted image.
-            smudge: How much to smudge (positive value) or fade (negative value) the rendered image.
+            font_params: A dictionary of font parameters. Optional, defaults to None.
             edge_map_method: The method to use for edge detection.
             debug: If True, show the rendered image for debugging.
         """
@@ -454,11 +500,16 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         self.page_number = page_number
         self.bounding_box = bounding_box
         self.word = word
-        self.typeface = typeface
+        self.font_params = font_params
         self.denoise = denoise
-        self.smudge = smudge
         self.debug = debug
         self.edge_map_method = edge_map_method
+
+        self.projection_bin_width = 4 # temporary
+
+        # TODO check that font_params are ok
+
+        ### Extract the word image from the PDF ###
 
         # get the extracted image
         self.extract_obj = WordImageExtractor(pdf_path=self.pdf_path, 
@@ -469,38 +520,94 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         if self.denoise:
             self.extract_obj.remove_specks()
 
-        # get the centroid of the extracted image
-        centroid = self._calculate_centroid(self.extract_obj.get_image())
-        print(f"Centroid of extracted image: {centroid}")
+        # get the extracted image
+        self.set_extracted_image(self.extract_obj.get_modified_image())
 
-        # get the rendered image
+        # get the centroid of the extracted image
+        self.centroid = self._calculate_centroid(self.extracted_image)
+        print(f"Centroid of extracted image: {self.centroid}")
+
+
+        ### Render the word image ###
+
+        # find the best font, font size, and smudge for the word (if not provided)
+        if self.font_params is None:
+            self.font_params = self._find_best_font_params()
+
+        # create the rendered image
         self.render_obj = WordImageRenderer(word=self.word, 
                                             width=self.extract_obj.get_width(), 
                                             height=self.extract_obj.get_height(),
-                                            typeface=self.typeface,
-                                            centroid=self._calculate_centroid(self.extract_obj.get_image()))
+                                            font_size=self.font_params["fontsize"],
+                                            typeface=self.font_params["typeface"],
+                                            smudge=self.font_params["smudge"],
+                                            centroid=self.centroid)
 
-        # apply smudge or fade if requested
-        if self.smudge > 0:
-            self.render_obj.smudge(distance_threshold=self.smudge)
-        elif self.smudge < 0:
-            self.render_obj.fade(distance_threshold=abs(self.smudge))
-
-        self.extracted_image = self.extract_obj.get_modified_image()
-        self.rendered_image = self.render_obj.get_modified_image()
-
-        self.extracted_image = self._convert_to_binary(self.extracted_image)
-        self.rendered_image = self._convert_to_binary(self.rendered_image)
-        self.projection_bin_width = 4 # temporary
-
-        # Extract the edge maps
-        self.extracted_edge_map = self._extract_edge_map(self.extracted_image, self.edge_map_method)
-        self.rendered_edge_map = self._extract_edge_map(self.rendered_image, self.edge_map_method)
+        # get the images
+        self.set_rendered_image(self.render_obj.get_modified_image())
 
         self._validate_images()
 
-        # Compute all the similarity scores
-        pass
+
+    def _find_best_font_params(self):
+        """
+        Finds the best typeface, font size, and smudge for the word.
+
+        Returns:
+
+        """
+        best_params = None
+        best_score = 0
+        for typeface in TYPEFACE_PATHS.keys():
+            print(f"Testing typeface: {typeface}")
+            for fontsize in range(int(self.extract_obj.get_height() - 10), int(self.extract_obj.get_height()), 1):
+                for smudge in range(-5, 10, 1):
+                    self.render_obj = WordImageRenderer(word=self.word, 
+                                                        width=self.extract_obj.get_width(), 
+                                                        height=self.extract_obj.get_height(),
+                                                        font_size=fontsize,
+                                                        typeface=typeface,
+                                                        smudge=smudge,
+                                                        centroid=self.centroid)
+                    
+                    self.set_rendered_image(self.render_obj.get_modified_image())
+
+                    # compute the score
+                    self.compute_similarity_scores()
+                    similarity_score = self.get_mean_similarity_score()
+                    
+                    if similarity_score > best_score or best_params is None:
+                        best_score = similarity_score
+                        best_params = {"typeface": typeface, "fontsize": fontsize, "smudge": smudge}
+
+        return best_params
+
+    def set_extracted_image(self, extracted_image: np.ndarray):
+        """
+        Set the extracted image.
+        """
+        # convert to binary
+        self.extracted_image = self._convert_to_binary(extracted_image)
+
+        # Extract the edge maps
+        self.extracted_edge_map = self._extract_edge_map(extracted_image, self.edge_map_method)
+
+        # set the extracted image
+        self.extracted_image = extracted_image
+
+    def set_rendered_image(self, rendered_image: np.ndarray):
+        """
+        Set the rendered image.
+        """
+        # convert to binary
+        self.rendered_image = self._convert_to_binary(rendered_image)
+
+        # Extract the edge maps
+        self.rendered_edge_map = self._extract_edge_map(rendered_image, self.edge_map_method)
+
+        # set the rendered image
+        self.rendered_image = rendered_image
+
 
     def _validate_images(self):
         """
@@ -567,9 +674,9 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         self.chamfer_dispersion_similarity = min(self._chamfer_dispersion_similarity(self.extracted_edge_map, self.rendered_edge_map),
                                                 self._chamfer_dispersion_similarity(self.rendered_edge_map, self.extracted_edge_map))
 
-    def get_distance_scores(self) -> dict:
+    def get_similarity_scores(self) -> dict:
         """
-        Returns the distance scores for the word as a dictionary.
+        Returns the similarity scores for the word as a dictionary.
 
         Returns:
             dict: A dictionary containing the similarity scores.
@@ -582,6 +689,12 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
                 "jaccard_similarity": self.jaccard_similarity, 
                 "chamfer_similarity": self.chamfer_similarity,
                 "chamfer_dispersion_similarity": self.chamfer_dispersion_similarity}
+
+    def get_mean_similarity_score(self) -> float:
+        """
+        Returns the mean similarity score for the word.
+        """
+        return float(np.mean(list(self.get_similarity_scores().values())))
 
 
 class ParagraphProcessor:
