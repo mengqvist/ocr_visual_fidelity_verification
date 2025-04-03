@@ -10,8 +10,6 @@ from vfv.algorithms import ImageSimilarityAlgorithms, ImageColorAlgorithms, Imag
 from config import TYPEFACE_PATHS   
 
 
-print(TYPEFACE_PATHS)
-
 PROJECT_ROOT = os.path.dirname(find_dotenv())
 
 
@@ -83,7 +81,6 @@ class WordImage(ImageDegradationAlgorithms):
         # convert to binary, if not already
         if self.image.ndim == 3:
             self.image = self._convert_to_binary(self.image)
-        print(f"Image shape: {self.image.shape}")
         return self.image
 
     def set_modified_image(self, image: np.ndarray):
@@ -181,7 +178,7 @@ class WordImageRenderer(WordImage):
     """
     A class for rendering a word as an image of the same size as the polygon.
     """
-    def __init__(self, word: str, width: int, height: int, font_size: int, typeface: str, smudge: float=0, centroid: tuple[float, float]=None):
+    def __init__(self, word: str, width: int, height: int, font_size: int, typeface: str, smudge_distance: float=0, centroid: tuple[float, float]=None):
         """
         Initialize the WordImageRenderer with word and polygon details.
 
@@ -191,7 +188,7 @@ class WordImageRenderer(WordImage):
             height (int): The height of the image, in pixels.
             font_size (int): The font size to use for the rendered image.
             typeface (str): The typeface to use for the rendered image.
-            smudge (float): The amount to smudge the image, in pixels.
+            smudge_distance (float): The amount to smudge the image, in pixels.
             centroid (tuple[float, float]): The centroid of the image, in pixels (x,y). Optional, defaults to None.
         """
         super().__init__()
@@ -205,9 +202,9 @@ class WordImageRenderer(WordImage):
         # text parameters
         self.font_size = font_size
         self.typeface = typeface   
-        self.smudge = smudge
+        self.smudge_distance = smudge_distance
 
-        if not isinstance(self.smudge, (int, float)):
+        if not isinstance(self.smudge_distance, (int, float)):
             raise ValueError("Smudge must be a number.")
 
         if self.centroid is not None:
@@ -223,58 +220,6 @@ class WordImageRenderer(WordImage):
 
         self._render_word_image()
 
-    def _validate_text_params(self, text_params: dict):
-        """
-        Validate the text parameters.
-        """
-        if text_params is None:
-            return True
-        
-        if not isinstance(text_params, dict):
-            raise ValueError("Text parameters must be a dictionary.")
-        
-        if "fontsize" not in text_params:
-            raise ValueError("Font size is required.")
-        
-        if "typeface" not in text_params:
-            raise ValueError("Typeface is required.")
-        
-        if "centroid" not in text_params:
-            raise ValueError("Centroid is required.")
-        
-        if "smudge" not in text_params:
-            raise ValueError("Smudge is required.")
-
-
-        if not isinstance(text_params["fontsize"], (int, float)):
-            raise ValueError("Font size must be a number.")
-        
-        if not isinstance(text_params["typeface"], str):
-            raise ValueError("Typeface must be a string.")
-        
-        if not isinstance(text_params["centroid"], tuple):
-            raise ValueError("Centroid must be a tuple.")
-        
-        if not isinstance(text_params["smudge"], (int, float)):
-            raise ValueError("Smudge must be a number.")
-        
-        if text_params["fontsize"] <= 0:
-            raise ValueError("Font size must be greater than 0.")
-        
-        # if text_params["typeface"] not in []:
-        #     raise 
-
-        if text_params["centroid"][0] < 0 or text_params["centroid"][0] > self.width:
-            raise ValueError("Centroid x must be between 0 and width.")
-        
-        if text_params["centroid"][1] < 0 or text_params["centroid"][1] > self.height:
-            raise ValueError("Centroid y must be between 0 and height.")    
-
-        if text_params["smudge"] < -5 or text_params["smudge"] > 5:
-            raise ValueError("Smudge must be between -5 and 10.")
-        
-        return True          
-
     def _get_available_typefaces(self) -> list[str]:
         """
         Get the available typefaces.
@@ -284,112 +229,44 @@ class WordImageRenderer(WordImage):
         """
         return list(TYPEFACE_PATHS.keys())
 
-    def _load_font(self, size: int):
+    def _load_font(self):
         """
         Load a TrueType font.
-
-        Args:
-            size (int): The size of the font.
 
         Returns:
             ImageFont: The loaded font.
         """
         try:
-            return ImageFont.truetype(TYPEFACE_PATHS[self.typeface], size)
+            return ImageFont.truetype(TYPEFACE_PATHS[self.typeface], self.font_size)
         except IOError:
             raise IOError(f"Font {self.typeface} not found.")
-
-    # def _render_word_image(self) -> np.ndarray:
+        
+    # def _get_text_width_height(self, rendered_np: np.ndarray) -> tuple[int, int]:
     #     """
-    #     Render a word as an image with the size of the polygon.
-        
-    #     The rendered word is centered within the bounding box defined by the polygon.
-    #     The function dynamically adjusts the font size so that the text fits within the image,
-    #     and it uses a fallback font if the primary one is not available.
-        
+    #     Get the width and height of the black pixels (text) in the rendered image.
+
     #     Returns:
-    #         A numpy array of the image with the rendered word.
+    #         tuple[int, int]: The width and height of the bounding box that contains all black pixels.
     #     """
-    #     # Create a blank grayscale image with a white background.
-    #     rendered_img = Image.new("RGB", (self.width, self.height), color='white')
-    #     draw = ImageDraw.Draw(rendered_img)
+    #     # convert to to binary
+    #     rendered_np = self._convert_to_binary(rendered_np)
 
-    #     # Start with the maximum possible font size (e.g., the image height).
-    #     font_size = self.height + 10
-    #     font = self._load_font(font_size)
+    #     # Find the coordinates where pixels are black (0)
+    #     y_indices, x_indices = np.where(rendered_np == 0)
         
-    #     # Measure the text size.
-    #     text_width, text_height = draw.textbbox((0, 0), self.word, font=font)[2:]
+    #     # If there are no black pixels, return 0,0
+    #     if x_indices.size == 0 or y_indices.size == 0:
+    #         return 0, 0
         
-    #     # Decrease the font size until the text fits inside the bounding box.
-    #     while (text_width > self.width or text_height > self.height) and font_size > 1:
-    #         font_size -= 1
-    #         font = self._load_font(font_size)
-    #         text_width, text_height = draw.textbbox((0, 0), self.word, font=font)[2:]
+    #     # Compute bounding box coordinates
+    #     x_min, x_max = np.min(x_indices), np.max(x_indices)
+    #     y_min, y_max = np.min(y_indices), np.max(y_indices)
         
-    #     # Draw the text in black.
-    #     draw.text((self.width // 2, self.height // 2), self.word, fill='black', font=font, anchor='mm')
+    #     # Width and height of the bounding box (add 1 if you want to count inclusive pixels)
+    #     width = x_max - x_min + 1
+    #     height = y_max - y_min + 1
         
-    #     # convert to numpy array
-    #     rendered_img = np.array(rendered_img)
-        
-    #     self.set_image(rendered_img)
-        
-    def _get_text_width_height(self, rendered_np: np.ndarray) -> tuple[int, int]:
-        """
-        Get the width and height of the black pixels (text) in the rendered image.
-
-        Returns:
-            tuple[int, int]: The width and height of the bounding box that contains all black pixels.
-        """
-        # convert to to binary
-        rendered_np = self._convert_to_binary(rendered_np)
-
-        # Find the coordinates where pixels are black (0)
-        y_indices, x_indices = np.where(rendered_np == 0)
-        
-        # If there are no black pixels, return 0,0
-        if x_indices.size == 0 or y_indices.size == 0:
-            return 0, 0
-        
-        # Compute bounding box coordinates
-        x_min, x_max = np.min(x_indices), np.max(x_indices)
-        y_min, y_max = np.min(y_indices), np.max(y_indices)
-        
-        # Width and height of the bounding box (add 1 if you want to count inclusive pixels)
-        width = x_max - x_min + 1
-        height = y_max - y_min + 1
-        
-        return width, height
-
-
-    def _write_text(self, 
-                    canvas_width: int,
-                    canvas_height: int,
-                    font: ImageFont.FreeTypeFont, 
-                    text: str, 
-                    anchor: str='mm'):
-        """
-        Write text to an image. Add smudge or fade if requested.
-        """
-        # create a blank image
-        canvas_center = (canvas_width // 2, canvas_height // 2)
-        rendered_img = Image.new("RGB", (canvas_width, canvas_height), color='white')
-        draw = ImageDraw.Draw(rendered_img)
-
-        # write the text
-        draw.text(canvas_center, text, fill='black', font=font, anchor=anchor)
-        
-        # Convert the rendered image to a NumPy array.
-        rendered_np = np.array(rendered_img)
-
-        # apply smudge or fade if requested
-        if self.smudge > 0:
-            rendered_np = self._smudge(rendered_np, self.smudge)
-        elif self.smudge < 0:
-            rendered_np = self._fade(rendered_np, self.smudge)
-
-        return rendered_np
+    #     return width, height
 
     def _render_word_image(self) -> np.ndarray:
         """
@@ -407,34 +284,34 @@ class WordImageRenderer(WordImage):
         # Step 1: Specify a large canvas.
         canvas_width, canvas_height = 2 * self.width, 2 * self.height
                 
-        # Step 2: Render a first version of the text and get its width and height.
-        font_size = self.height + 2
-        font = self._load_font(font_size)
-        rendered_np = self._write_text(canvas_width, canvas_height, font, self.word)
-        text_width, text_height = self._get_text_width_height(rendered_np)
+        # Step 2: Render the text.
+        font = self._load_font()
+        canvas_center = (canvas_width // 2, canvas_height // 2)
+        rendered_img = Image.new("RGB", (canvas_width, canvas_height), color='white')
+        draw = ImageDraw.Draw(rendered_img)
+        draw.text(canvas_center, self.word, fill='black', font=font, anchor='mm')
+        rendered_np = np.array(rendered_img)
 
-        # Decrease font size until text fits within self.width x self.height.
-        while (text_width > self.width or text_height > self.height) and font_size > 1:
-            font_size -= 1
-            font = self._load_font(font_size)
-            rendered_np = self._write_text(canvas_width, canvas_height, font, self.word)
-            text_width, text_height = self._get_text_width_height(rendered_np)
-        
+        # apply smudge or fade to simulate text degradation, if requested
+        if self.smudge_distance > 0:
+            rendered_np = self._smudge(rendered_np, self.smudge_distance)
+        elif self.smudge_distance < 0:
+            rendered_np = self._fade(rendered_np, self.smudge_distance)
+
         # Step 3: Calculate the center of mass from the rendered image.
         # Convert to grayscale for the centroid calculation.
         rendered_gray = self._convert_to_grayscale(rendered_np)  # convert to grayscale
-        rendered_centroid = self._calculate_centroid(rendered_gray)  # returns (x, y)
-              
+        rendered_x, rendered_y = self._calculate_centroid(rendered_gray)  # returns (x, y)
+
         # Step 4: Compute crop coordinates so that the rendered centroid aligns with self.centroid.
         if self.centroid is None:
             target_x, target_y = canvas_width // 2, canvas_height // 2
         else:
             target_x, target_y = self.centroid
-        rx, ry = rendered_centroid         # computed center of mass in the large image
-
+        
         # Determine top-left corner of crop: we want rx to end up at target_x, and ry at target_y.
-        crop_x = int(rx - target_x)
-        crop_y = int(ry - target_y)
+        crop_x = int(rendered_x - target_x)
+        crop_y = int(rendered_y - target_y)
         
         # Ensure the crop stays within the canvas boundaries.
         crop_x = max(0, min(crop_x, canvas_width - self.width))
@@ -465,6 +342,24 @@ class WordImageRenderer(WordImage):
 
         """
         output = self._fade(self.get_image(), distance_threshold)
+        self.set_modified_image(output)
+
+    def degrade(self, distance_threshold: float):
+        """
+        Apply a distance-based smudging and fading for natural-looking text degradation.
+
+        Args:
+            distance_threshold: Distance threshold for degradation (in pixels)
+                            Positive values create more smudging, negative values create more fading
+        """
+        # apply smudge or fade to simulate text degradation, if requested
+        if distance_threshold > 0:
+            output = self._smudge(self.get_image(), distance_threshold)
+        elif distance_threshold < 0:
+            output = self._fade(self.get_image(), distance_threshold)
+        elif distance_threshold == 0:
+            output = self.get_image()
+
         self.set_modified_image(output)
 
 
@@ -525,7 +420,6 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
 
         # get the centroid of the extracted image
         self.centroid = self._calculate_centroid(self.extracted_image)
-        print(f"Centroid of extracted image: {self.centroid}")
 
 
         ### Render the word image ###
@@ -540,7 +434,7 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
                                             height=self.extract_obj.get_height(),
                                             font_size=self.font_params["fontsize"],
                                             typeface=self.font_params["typeface"],
-                                            smudge=self.font_params["smudge"],
+                                            smudge_distance=self.font_params["degradation_threshold"],
                                             centroid=self.centroid)
 
         # get the images
@@ -548,6 +442,32 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
 
         self._validate_images()
 
+    def _has_white_border(self, image: np.ndarray, border_width: int = 4) -> bool:
+        """
+        Check that the image has a white border of given width all around.
+        
+        Args:
+            image (np.ndarray): Binary image (text=0, background=255).
+            border_width (int): Width of the border to check (default=4).
+        
+        Returns:
+            bool: True if all border pixels are white, False otherwise.
+        """
+        # Ensure it's binary first
+        if len(image.shape) == 3:
+            raise ValueError("Expected binary image, got color image.")
+
+        top = image[:border_width, :]
+        bottom = image[-border_width:, :]
+        left = image[:, :border_width]
+        right = image[:, -border_width:]
+
+        return (
+            np.all(top == 255) and
+            np.all(bottom == 255) and
+            np.all(left == 255) and
+            np.all(right == 255)
+        )
 
     def _find_best_font_params(self):
         """
@@ -559,26 +479,30 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         best_params = None
         best_score = 0
         for typeface in TYPEFACE_PATHS.keys():
-            print(f"Testing typeface: {typeface}")
-            for fontsize in range(int(self.extract_obj.get_height() - 10), int(self.extract_obj.get_height()), 1):
-                for smudge in range(-5, 10, 1):
-                    self.render_obj = WordImageRenderer(word=self.word, 
-                                                        width=self.extract_obj.get_width(), 
-                                                        height=self.extract_obj.get_height(),
-                                                        font_size=fontsize,
-                                                        typeface=typeface,
-                                                        smudge=smudge,
-                                                        centroid=self.centroid)
+            for fontsize in range(int(self.extract_obj.get_height() - 12), int(self.extract_obj.get_height()), 1):
+                self.render_obj = WordImageRenderer(word=self.word, 
+                                                    width=self.extract_obj.get_width(), 
+                                                    height=self.extract_obj.get_height(),
+                                                    font_size=fontsize,
+                                                    typeface=typeface,
+                                                    smudge_distance=0,
+                                                    centroid=self.centroid)
+                for degradation_threshold in range(-3, 10, 1):
+                    # apply degradation
+                    self.render_obj.degrade(degradation_threshold)
                     
+                    # get the rendered image
                     self.set_rendered_image(self.render_obj.get_modified_image())
 
                     # compute the score
                     self.compute_similarity_scores()
                     similarity_score = self.get_mean_similarity_score()
-                    
+
                     if similarity_score > best_score or best_params is None:
                         best_score = similarity_score
-                        best_params = {"typeface": typeface, "fontsize": fontsize, "smudge": smudge}
+                        best_params = {"typeface": typeface, "fontsize": fontsize, "degradation_threshold": degradation_threshold}
+
+        print(f"Best params: {best_params}")
 
         return best_params
 
@@ -664,15 +588,23 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         """
         Computes the similarity scores for the word.
         """
-        # Metrics on original image
-        self.projection_similarity = self._projection_histogram_similarity(self.extracted_image, self.rendered_image, self.projection_bin_width)
-        self.hu_similarity = self._hu_similarity(self.extracted_image, self.rendered_image)
-        self.jaccard_similarity = self._jaccard_similarity(self.extracted_image, self.rendered_image)
+        # check whether there is a border of 4 pixels around the edge of the rendered image, I don't want the edge of the rendered image to be cropped
+        if not self._has_white_border(self.rendered_image):
+            self.projection_similarity = 0.0
+            self.hu_similarity = 0.0
+            self.jaccard_similarity = 0.0
+            self.chamfer_similarity = 0.0
 
-        # Metrics on extracted edges
-        self.chamfer_similarity = self._robust_chamfer_similarity(self.extracted_edge_map, self.rendered_edge_map)
-        self.chamfer_dispersion_similarity = min(self._chamfer_dispersion_similarity(self.extracted_edge_map, self.rendered_edge_map),
-                                                self._chamfer_dispersion_similarity(self.rendered_edge_map, self.extracted_edge_map))
+        else:
+            # Metrics on original image
+            self.projection_similarity = self._projection_histogram_similarity(self.extracted_image, self.rendered_image, self.projection_bin_width)
+            self.hu_similarity = self._hu_similarity(self.extracted_image, self.rendered_image)
+            self.jaccard_similarity = self._jaccard_similarity(self.extracted_image, self.rendered_image)
+
+            # Metrics on extracted edges
+            self.chamfer_similarity = self._robust_chamfer_similarity(self.extracted_edge_map, self.rendered_edge_map)
+            # self.chamfer_dispersion_similarity = min(self._chamfer_dispersion_similarity(self.extracted_edge_map, self.rendered_edge_map),
+            #                                         self._chamfer_dispersion_similarity(self.rendered_edge_map, self.extracted_edge_map))
 
     def get_similarity_scores(self) -> dict:
         """
@@ -681,14 +613,11 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         Returns:
             dict: A dictionary containing the similarity scores.
         """
-        if self.projection_similarity is None:
-            self.compute_similarity_scores()
-
         return {"projection_similarity": self.projection_similarity, 
                 "hu_similarity": self.hu_similarity, 
                 "jaccard_similarity": self.jaccard_similarity, 
-                "chamfer_similarity": self.chamfer_similarity,
-                "chamfer_dispersion_similarity": self.chamfer_dispersion_similarity}
+                "chamfer_similarity": self.chamfer_similarity,}
+            # "chamfer_dispersion_similarity": self.chamfer_dispersion_similarity}
 
     def get_mean_similarity_score(self) -> float:
         """
