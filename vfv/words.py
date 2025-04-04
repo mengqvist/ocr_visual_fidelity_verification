@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 from dotenv import load_dotenv, find_dotenv
 from vfv.algorithms import ImageSimilarityAlgorithms, ImageColorAlgorithms, ImageDegradationAlgorithms
-from config import TYPEFACE_PATHS   
+from config import TYPEFACE_PATHS
 
 
 PROJECT_ROOT = os.path.dirname(find_dotenv())
@@ -241,33 +241,6 @@ class WordImageRenderer(WordImage):
         except IOError:
             raise IOError(f"Font {self.typeface} not found.")
         
-    # def _get_text_width_height(self, rendered_np: np.ndarray) -> tuple[int, int]:
-    #     """
-    #     Get the width and height of the black pixels (text) in the rendered image.
-
-    #     Returns:
-    #         tuple[int, int]: The width and height of the bounding box that contains all black pixels.
-    #     """
-    #     # convert to to binary
-    #     rendered_np = self._convert_to_binary(rendered_np)
-
-    #     # Find the coordinates where pixels are black (0)
-    #     y_indices, x_indices = np.where(rendered_np == 0)
-        
-    #     # If there are no black pixels, return 0,0
-    #     if x_indices.size == 0 or y_indices.size == 0:
-    #         return 0, 0
-        
-    #     # Compute bounding box coordinates
-    #     x_min, x_max = np.min(x_indices), np.max(x_indices)
-    #     y_min, y_max = np.min(y_indices), np.max(y_indices)
-        
-    #     # Width and height of the bounding box (add 1 if you want to count inclusive pixels)
-    #     width = x_max - x_min + 1
-    #     height = y_max - y_min + 1
-        
-    #     return width, height
-
     def _render_word_image(self) -> np.ndarray:
         """
         Render a word in an image and align its center of mass with the target centroid.
@@ -297,6 +270,8 @@ class WordImageRenderer(WordImage):
             rendered_np = self._smudge(rendered_np, self.smudge_distance)
         elif self.smudge_distance < 0:
             rendered_np = self._fade(rendered_np, self.smudge_distance)
+        else:
+            rendered_np = self._convert_to_binary(rendered_np)
 
         # Step 3: Calculate the center of mass from the rendered image.
         # Convert to grayscale for the centroid calculation.
@@ -502,8 +477,6 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
                         best_score = similarity_score
                         best_params = {"typeface": typeface, "fontsize": fontsize, "degradation_threshold": degradation_threshold}
 
-        print(f"Best params: {best_params}")
-
         return best_params
 
     def set_extracted_image(self, extracted_image: np.ndarray):
@@ -541,18 +514,18 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
             ValueError: If the dimensions of the extracted and rendered images do not match.
         """
         if self.extract_obj.get_dimensions() != self.render_obj.get_dimensions():
-            raise ValueError("Extracted and rendered images have different dimensions.")
+            raise ValueError(f"Extracted and rendered images have different dimensions: {self.extract_obj.get_dimensions()} != {self.render_obj.get_dimensions()}")
         
         if self.extract_obj.get_modified_dimensions() != self.render_obj.get_modified_dimensions():
-            raise ValueError("Extracted and rendered images have different dimensions.")
+            raise ValueError(f"Extracted and rendered (modified) images have different dimensions: {self.extract_obj.get_modified_dimensions()} != {self.render_obj.get_modified_dimensions()}")
         
         if self.extracted_image.shape != self.rendered_image.shape:
-            raise ValueError("Extracted and rendered images have different dimensions.")
+            raise ValueError(f"Extracted and rendered images have different dimensions: {self.extracted_image.shape} != {self.rendered_image.shape}")
         
         if self.extracted_edge_map.shape != self.rendered_edge_map.shape:
-            raise ValueError("Extracted and rendered edge maps have different dimensions.")
+            raise ValueError(f"Extracted and rendered edge maps have different dimensions: {self.extracted_edge_map.shape} != {self.rendered_edge_map.shape}")
 
-    def show_images(self):
+    def show_images(self, show_edge_maps: bool = False):
         """
         Shows the extracted and rendered word images.
         """
@@ -563,12 +536,13 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         plt.yticks([])  # Remove y-axis ticks
         plt.show()
 
-        plt.imshow(self.extracted_edge_map, cmap='gray')
-        plt.title("Extracted Word Edge Map")
-        plt.axis('on')  # Keep the box
-        plt.xticks([])  # Remove x-axis ticks
-        plt.yticks([])  # Remove y-axis ticks
-        plt.show()
+        if show_edge_maps:
+            plt.imshow(self.extracted_edge_map, cmap='gray')
+            plt.title("Extracted Word Edge Map")
+            plt.axis('on')  # Keep the box
+            plt.xticks([])  # Remove x-axis ticks
+            plt.yticks([])  # Remove y-axis ticks
+            plt.show()
 
         plt.imshow(self.rendered_image, cmap='gray')
         plt.title("Rendered Word Image")
@@ -577,12 +551,13 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         plt.yticks([])  # Remove y-axis ticks
         plt.show()
 
-        plt.imshow(self.rendered_edge_map, cmap='gray')
-        plt.title("Rendered Word Edge Map")
-        plt.axis('on')  # Keep the box
-        plt.xticks([])  # Remove x-axis ticks
-        plt.yticks([])  # Remove y-axis ticks
-        plt.show()
+        if show_edge_maps:
+            plt.imshow(self.rendered_edge_map, cmap='gray')
+            plt.title("Rendered Word Edge Map")
+            plt.axis('on')  # Keep the box
+            plt.xticks([])  # Remove x-axis ticks
+            plt.yticks([])  # Remove y-axis ticks
+            plt.show()
         
     def compute_similarity_scores(self):
         """
@@ -632,11 +607,9 @@ class ParagraphProcessor:
     """
     def __init__(self, paragraph: str):
         """
-        Initialize the ParagraphProcessor with a paragraph.
+        A class for processing a document to obtain quality scores for each word.
         """
         pass
-
-
 
 
 class Document:
@@ -674,17 +647,42 @@ class Document:
         return self.json_path
 
 
-class DocumentProcessor(Document):
-    """
-    A class for processing a document to obtain quality scores for each word.
-    """
-    def __init__(self, pdf_path: str, json_path: str):
+    def get_json_loader(self) -> json_parser.JSONParser:
         """
-        Initialize the DocumentProcessor with a Document.
+        Get the JSON loader.
 
-        Args:
-            pdf_path (str): The path to the PDF document.
-            json_path (str): The path to the JSON document.
+        Returns:
+            json_parser.JSONParser: The JSON loader.
         """
-        super().__init__(pdf_path, json_path)
+        return self.json_loader
 
+    def process_document(self):
+        """
+        Process the document to obtain quality scores for each word.
+
+        Returns:
+            list: A list of WordPairProcessor objects.
+        """
+        word_list = []
+        num_pages = len(self.json_loader.pages)
+        for page_number in range(1, num_pages + 1):
+            print(f"Processing page {page_number} of {num_pages}")
+            page_obj = self.json_loader.get_page(page_number)
+            for i, word in enumerate(page_obj.get_words()):
+                print(f"Processing word {i} of {len(page_obj.get_words())}")
+                word_processor = WordPairProcessor(pdf_path=self.pdf_path, 
+                                                   page_number=page_number, 
+                                                   bounding_box=word.get_bounding_box(), 
+                                                   word=word.get_content(),
+                                                   denoise=True,
+                                                   font_params=None,
+                                                   edge_map_method='sobel',
+                                                   debug=False)
+                word_processor.compute_similarity_scores()
+                word_list.append(word_processor)
+                
+                if i > 10:
+                    break
+            break
+
+        return word_list

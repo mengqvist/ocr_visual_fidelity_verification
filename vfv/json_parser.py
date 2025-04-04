@@ -63,6 +63,14 @@ class OCRWord:
         if self.bounding_box is None and self.polygon:
             self.bounding_box = BoundingBox.from_polygon(self.polygon)
 
+    def get_content(self) -> str:
+        """Get the content of the word."""
+        return self.content
+
+    def get_bounding_box(self) -> BoundingBox:
+        """Get the bounding box of the word."""
+        return [self.bounding_box.x, self.bounding_box.y, self.bounding_box.width, self.bounding_box.height]
+
 @dataclass
 class OCRLine:
     """Represents a line of text from OCR output."""
@@ -158,6 +166,22 @@ class OCRPage:
     words: List[OCRWord] = field(default_factory=list)
     lines: List[OCRLine] = field(default_factory=list)
     spans: List[Span] = field(default_factory=list)
+
+    def get_word(self, index: int) -> OCRWord:
+        """Get the word at the given index."""
+        return self.words[index]
+
+    def get_words(self) -> List[OCRWord]:
+        """Get the words of the page."""
+        return self.words
+
+    def get_line(self, index: int) -> OCRLine:
+        """Get the line at the given index."""
+        return self.lines[index]
+
+    def get_lines(self) -> List[OCRLine]:
+        """Get the lines of the page."""
+        return self.lines
 
 class JSONParser:
     """Represents a complete OCR document from Azure Document Intelligence."""
