@@ -2,7 +2,7 @@ import fitz  # PyMuPDF
 from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
-from vfv import json_parser
+from vfv import parsers
 from PIL import Image, ImageDraw, ImageFont
 import os
 from dotenv import load_dotenv, find_dotenv
@@ -79,8 +79,6 @@ class WordImage(ImageDegradationAlgorithms):
             np.ndarray: The current image.
         """
         # convert to binary, if not already
-        if self.image.ndim == 3:
-            self.image = self._convert_to_binary(self.image)
         return self.image
 
     def set_modified_image(self, image: np.ndarray):
@@ -91,8 +89,6 @@ class WordImage(ImageDegradationAlgorithms):
             image (np.ndarray): The image to set.
         """
         # convert to binary, if not already
-        if image.ndim == 3:
-            image = self._convert_to_binary(image)
         self.modified_image = image
 
     def get_modified_image(self) -> np.ndarray:
@@ -105,61 +101,21 @@ class WordImage(ImageDegradationAlgorithms):
         return self.modified_image
     
 
-class WordImageExtractor(WordImage):
+class WordImageCleaner(WordImage):
     """
-    A class for extracting a word image from a PDF document.
+    A class for processing an extracted word image from a PDF document.
     """
-    def __init__(self, pdf_path: str, page_number: int, bounding_box: list):
+    def __init__(self, image: np.ndarray):
         """
-        Initialize the WordImageExtractor with the path to the PDF, page number, polygon, DPI, and debug flag.
+        Initialize the WordImageCleaner with the image to process.
 
         Args:
-            pdf_path (str): The path to the PDF document.
-            page_number (int): The page number in the PDF document (0-based index).
-            bounding_box (list): A list of coordinates representing the bounding box (x, y, width, height).
+            image (np.ndarray): The image to process.
         """
         super().__init__()
-        self.pdf_path = pdf_path
-        self.page_number = page_number
-        self.bounding_box = bounding_box
-        self._extract_word_image()
 
-    def _extract_word_image(self) -> np.ndarray:
-        """
-        Extract the image corresponding to the given polygon from the specified page of the PDF.
-
-        Returns:
-            A numpy array of the image cropped to the bounding box of the polygon.
-        """
-        # Open the PDF document.
-        pdf_doc = fitz.open(self.pdf_path)
-        pdf_page = pdf_doc[self.page_number - 1]
-        page_info = pdf_page.get_image_info()[0]
-        dpi_x, dpi_y = page_info['xres'], page_info['yres']
-        page_width = page_info['bbox'][2] / 72
-        page_height = page_info['bbox'][3] / 72
-        
-        # Make an image
-        pix = pdf_page.get_pixmap(matrix=fitz.Matrix(dpi_x / 10, dpi_y / 10))
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        pdf_doc.close()
-
-        # Compute scaling factors from OCR coordinates to image pixels
-        scale_x = pix.width / page_width if page_width else 1
-        scale_y = pix.height / page_height if page_height else 1
-
-        # Scale bounding box coordinates to image space
-        x = self.bounding_box[0] * scale_x
-        y = self.bounding_box[1] * scale_y
-        width = self.bounding_box[2] * scale_x
-        height = self.bounding_box[3] * scale_y
-
-        # Crop the image to the bounding box and convert to numpy array
-        cropped_img = np.array(img.crop((x, y, x + width, y + height)))
-
-        # Apply binary thresholding to clean up fuzzy edges
-        # You can adjust the threshold value (127) as needed
-        binary = self._convert_to_binary(cropped_img)
+        # Apply binary thresholding to clean up fuzzy edges and prepare for further processing
+        binary = self._convert_to_binary(image)
 
         self.set_image(binary)
 
@@ -176,7 +132,7 @@ class WordImageExtractor(WordImage):
 
 class WordImageRenderer(WordImage):
     """
-    A class for rendering a word as an image of the same size as the polygon.
+    A class for rendering a word as an image of a given size.
     """
     def __init__(self, word: str, width: int, height: int, font_size: int, typeface: str, smudge_distance: float=0, centroid: tuple[float, float]=None):
         """
@@ -263,7 +219,7 @@ class WordImageRenderer(WordImage):
         rendered_img = Image.new("RGB", (canvas_width, canvas_height), color='white')
         draw = ImageDraw.Draw(rendered_img)
         draw.text(canvas_center, self.word, fill='black', font=font, anchor='mm')
-        rendered_np = np.array(rendered_img)
+        rendered_np = self._convert_to_binary(np.array(rendered_img))
 
         # apply smudge or fade to simulate text degradation, if requested
         if self.smudge_distance > 0:
@@ -294,7 +250,9 @@ class WordImageRenderer(WordImage):
         
         cropped_img = rendered_np[crop_y:crop_y + self.height, crop_x:crop_x + self.width]
         
-        self.set_image(cropped_img)
+        binary = self._convert_to_binary(cropped_img)
+
+        self.set_image(binary)
 
     def smudge(self, distance_threshold: float = 1.5):
         """
@@ -344,11 +302,11 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
     and rendering the corresponding OCR-extracted word as an image of the same size.
     """
     def __init__(self, 
-                 pdf_path: str, 
+                 pdf_parser: parsers.PDFParser, 
+                 json_parser: parsers.JSONParser, 
                  page_number: int, 
-                 bounding_box: list, 
-                 word: str, 
-                 denoise: bool = False,
+                 word_index: int, 
+                 denoise: bool = True,
                  font_params: dict = None,
                  edge_map_method: str = 'sobel',
                  debug: bool = False):
@@ -356,20 +314,20 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         Initialize the WordImageProcessor with PDF details and word information.
         
         Args:
-            pdf_path: Path to the PDF file.
+            pdf_parser: The PDF parser.
+            json_parser: The JSON parser.
             page_number: 1-based page number.
-            bounding_box: A flat list of floats [x, y, width, height] defining the bounding box.
-            word: The text to render.
+            word_index: 0-based word index.
             denoise: If True, denoise the extracted image.
             font_params: A dictionary of font parameters. Optional, defaults to None.
             edge_map_method: The method to use for edge detection.
             debug: If True, show the rendered image for debugging.
         """
         super().__init__()
-        self.pdf_path = pdf_path
         self.page_number = page_number
-        self.bounding_box = bounding_box
-        self.word = word
+        self.word_index = word_index
+        self.word = json_parser.get_page(self.page_number).get_word(self.word_index).get_content()
+
         self.font_params = font_params
         self.denoise = denoise
         self.debug = debug
@@ -382,9 +340,7 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         ### Extract the word image from the PDF ###
 
         # get the extracted image
-        self.extract_obj = WordImageExtractor(pdf_path=self.pdf_path, 
-                                              page_number=self.page_number, 
-                                              bounding_box=self.bounding_box)
+        self.extract_obj = WordImageCleaner(image=pdf_parser.get_word_image(self.page_number, self.word_index))
         
         # denoise if requested
         if self.denoise:
@@ -417,33 +373,6 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
 
         self._validate_images()
 
-    def _has_white_border(self, image: np.ndarray, border_width: int = 4) -> bool:
-        """
-        Check that the image has a white border of given width all around.
-        
-        Args:
-            image (np.ndarray): Binary image (text=0, background=255).
-            border_width (int): Width of the border to check (default=4).
-        
-        Returns:
-            bool: True if all border pixels are white, False otherwise.
-        """
-        # Ensure it's binary first
-        if len(image.shape) == 3:
-            raise ValueError("Expected binary image, got color image.")
-
-        top = image[:border_width, :]
-        bottom = image[-border_width:, :]
-        left = image[:, :border_width]
-        right = image[:, -border_width:]
-
-        return (
-            np.all(top == 255) and
-            np.all(bottom == 255) and
-            np.all(left == 255) and
-            np.all(right == 255)
-        )
-
     def _find_best_font_params(self):
         """
         Finds the best typeface, font size, and smudge for the word.
@@ -452,30 +381,50 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
 
         """
         best_params = None
-        best_score = 0
+        best_score = -1
+        width = self.extract_obj.get_width()
+        height = self.extract_obj.get_height()
         for typeface in TYPEFACE_PATHS.keys():
-            for fontsize in range(int(self.extract_obj.get_height() - 12), int(self.extract_obj.get_height()), 1):
-                self.render_obj = WordImageRenderer(word=self.word, 
-                                                    width=self.extract_obj.get_width(), 
-                                                    height=self.extract_obj.get_height(),
-                                                    font_size=fontsize,
-                                                    typeface=typeface,
-                                                    smudge_distance=0,
-                                                    centroid=self.centroid)
-                for degradation_threshold in range(-3, 10, 1):
-                    # apply degradation
-                    self.render_obj.degrade(degradation_threshold)
-                    
-                    # get the rendered image
-                    self.set_rendered_image(self.render_obj.get_modified_image())
+            for fontsize in range(int(height - 12), int(height), 1):
+                # Render the word once with no degradation.
+                temp_renderer = WordImageRenderer(
+                    word=self.word,
+                    width=width,
+                    height=height,
+                    font_size=fontsize,
+                    typeface=typeface,
+                    smudge_distance=0,
+                    centroid=self.centroid
+                )
+                # Cache the baseline rendered image.
+                base_rendered = self._convert_to_binary(temp_renderer.get_modified_image().copy())
 
-                    # compute the score
-                    self.compute_similarity_scores()
-                    similarity_score = self.get_mean_similarity_score()
+                # discard if the baseline image has no white border
+                if best_score != -1 and not self._has_white_border(base_rendered):
+                    continue
+                
+                # Loop over degradation thresholds.
+                for degradation_threshold in range(-3, 10):
+                    # Apply degradation on the baseline image directly.
+                    if degradation_threshold > 0:
+                        rendered_variant = self._smudge(base_rendered, degradation_threshold)
+                    elif degradation_threshold < 0:
+                        rendered_variant = self._fade(base_rendered, degradation_threshold)
+                    else:
+                        rendered_variant = base_rendered
 
-                    if similarity_score > best_score or best_params is None:
+                    # Compute similarity score using the local helper.
+                    scores = self._compute_similarity_for_variant(rendered_variant)
+                    similarity_score = np.mean(list(scores.values()))
+
+                    # Update best parameters if the score is higher.
+                    if similarity_score > best_score:
                         best_score = similarity_score
-                        best_params = {"typeface": typeface, "fontsize": fontsize, "degradation_threshold": degradation_threshold}
+                        best_params = {
+                            "typeface": typeface,
+                            "fontsize": fontsize,
+                            "degradation_threshold": degradation_threshold
+                        }
 
         return best_params
 
@@ -557,29 +506,37 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
             plt.axis('on')  # Keep the box
             plt.xticks([])  # Remove x-axis ticks
             plt.yticks([])  # Remove y-axis ticks
-            plt.show()
-        
+            plt.show() 
+
+    def _compute_similarity_for_variant(self, rendered_variant: np.ndarray) -> float:
+        """
+        Computes the similarity score for a given rendered variant.
+        """
+        rendered_variant_edge_map = self._extract_edge_map(rendered_variant, self.edge_map_method)
+        if not self._has_white_border(rendered_variant):
+            scores = {#"projection_similarity": 0.0,
+                     "hu_similarity": 0.0,
+                     "jaccard_similarity": 0.0,
+                     "chamfer_similarity": 0.0}
+        else:
+            scores = self._compute_similarity(image1=self.extracted_image, 
+                                             image2=rendered_variant, 
+                                             image1_edge_map=self.extracted_edge_map, 
+                                             image2_edge_map=rendered_variant_edge_map)
+        return scores
+
     def compute_similarity_scores(self):
         """
         Computes the similarity scores for the word.
         """
-        # check whether there is a border of 4 pixels around the edge of the rendered image, I don't want the edge of the rendered image to be cropped
-        if not self._has_white_border(self.rendered_image):
-            self.projection_similarity = 0.0
-            self.hu_similarity = 0.0
-            self.jaccard_similarity = 0.0
-            self.chamfer_similarity = 0.0
-
-        else:
-            # Metrics on original image
-            self.projection_similarity = self._projection_histogram_similarity(self.extracted_image, self.rendered_image, self.projection_bin_width)
-            self.hu_similarity = self._hu_similarity(self.extracted_image, self.rendered_image)
-            self.jaccard_similarity = self._jaccard_similarity(self.extracted_image, self.rendered_image)
-
-            # Metrics on extracted edges
-            self.chamfer_similarity = self._robust_chamfer_similarity(self.extracted_edge_map, self.rendered_edge_map)
-            # self.chamfer_dispersion_similarity = min(self._chamfer_dispersion_similarity(self.extracted_edge_map, self.rendered_edge_map),
-            #                                         self._chamfer_dispersion_similarity(self.rendered_edge_map, self.extracted_edge_map))
+        scores = self._compute_similarity(image1=self.extracted_image, 
+                                         image2=self.rendered_image, 
+                                         image1_edge_map=self.extracted_edge_map, 
+                                         image2_edge_map=self.rendered_edge_map)
+        #self.projection_similarity = scores["projection_similarity"]
+        self.hu_similarity = scores["hu_similarity"]
+        self.jaccard_similarity = scores["jaccard_similarity"]
+        self.chamfer_similarity = scores["chamfer_similarity"]
 
     def get_similarity_scores(self) -> dict:
         """
@@ -588,7 +545,7 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         Returns:
             dict: A dictionary containing the similarity scores.
         """
-        return {"projection_similarity": self.projection_similarity, 
+        return {#"projection_similarity": self.projection_similarity, 
                 "hu_similarity": self.hu_similarity, 
                 "jaccard_similarity": self.jaccard_similarity, 
                 "chamfer_similarity": self.chamfer_similarity,}
@@ -626,7 +583,8 @@ class Document:
             raise FileNotFoundError(f"JSON file not found: {json_path}")
         self.pdf_path = pdf_path
         self.json_path = json_path
-        self.json_loader = json_parser.JSONParser(json_path)
+        self.json_loader = parsers.JSONParser(json_path)
+        self.pdf_loader = parsers.PDFParser(pdf_path, self.json_loader)
 
     def get_pdf_path(self) -> str:
         """
@@ -647,7 +605,7 @@ class Document:
         return self.json_path
 
 
-    def get_json_loader(self) -> json_parser.JSONParser:
+    def get_json_loader(self) -> parsers.JSONParser:
         """
         Get the JSON loader.
 
@@ -655,6 +613,12 @@ class Document:
             json_parser.JSONParser: The JSON loader.
         """
         return self.json_loader
+    
+    def get_pdf_loader(self) -> parsers.PDFParser:
+        """
+        Get the PDF loader.
+        """
+        return self.pdf_loader
 
     def process_document(self):
         """
@@ -670,10 +634,10 @@ class Document:
             page_obj = self.json_loader.get_page(page_number)
             for i, word in enumerate(page_obj.get_words()):
                 print(f"Processing word {i} of {len(page_obj.get_words())}")
-                word_processor = WordPairProcessor(pdf_path=self.pdf_path, 
+                word_processor = WordPairProcessor(pdf_parser=self.pdf_loader,
+                                                   json_parser=self.json_loader,
                                                    page_number=page_number, 
-                                                   bounding_box=word.get_bounding_box(), 
-                                                   word=word.get_content(),
+                                                   word_index=i,
                                                    denoise=True,
                                                    font_params=None,
                                                    edge_map_method='sobel',
@@ -686,3 +650,14 @@ class Document:
             break
 
         return word_list
+
+
+
+if __name__ == "__main__":
+
+    pdf_path = "data/pdfs/24492351__AMERICAS__Costa-Rica__WELL-LOG__MUDLOGGING__3.43237209320068359375__.pdf"
+    json_path = "data/raw_json/24492351__AMERICAS__Costa-Rica__WELL-LOG__MUDLOGGING__3.43237209320068359375__.pdf.ocr.json"
+
+
+    document_obj = Document(pdf_path=pdf_path, json_path=json_path)
+    words = document_obj.process_document()
