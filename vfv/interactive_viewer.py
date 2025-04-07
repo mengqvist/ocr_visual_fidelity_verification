@@ -7,7 +7,7 @@ from matplotlib.widgets import Button
 from PIL import Image
 
 # Use relative import since interactive_viewer.py is in src/gui/
-from vfv.json_parser import JSONParser
+from vfv.parsers import JSONParser
 from vfv.viewer import OCRViewer  # our updated visualizer code
 
 class InteractiveOCRViewer:

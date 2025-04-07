@@ -556,14 +556,14 @@ class ImageSimilarityAlgorithms(ImageDegradationAlgorithms):
             float: The similarity score.
         """
         # Metrics on original image
-        #projection_similarity = self._projection_histogram_similarity(image1, image2, projection_bin_width)
+        projection_similarity = self._projection_histogram_similarity(image1, image2, projection_bin_width)
         hu_similarity = self._hu_similarity(image1, image2)
         jaccard_similarity = self._jaccard_similarity(image1, image2)
 
         # Metrics on extracted edges
         chamfer_similarity = self._robust_chamfer_similarity(image1_edge_map, image2_edge_map)
 
-        return {#"projection_similarity": projection_similarity, 
+        return {"projection_similarity": projection_similarity, 
                 "hu_similarity": hu_similarity, 
                 "jaccard_similarity": jaccard_similarity, 
                 "chamfer_similarity": chamfer_similarity}

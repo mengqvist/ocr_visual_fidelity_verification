@@ -1,4 +1,3 @@
-import fitz  # PyMuPDF
 from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
@@ -8,7 +7,11 @@ import os
 from dotenv import load_dotenv, find_dotenv
 from vfv.algorithms import ImageSimilarityAlgorithms, ImageColorAlgorithms, ImageDegradationAlgorithms
 from config import TYPEFACE_PATHS
+import logging
 
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = os.path.dirname(find_dotenv())
 
@@ -262,7 +265,7 @@ class WordImageRenderer(WordImage):
             distance_threshold: Distance threshold for smudging (in pixels)
                             Higher values create more smudging
         """
-        output = self._smudge(self.get_image(), distance_threshold)
+        output = self._smudge(self.get_image().copy(), distance_threshold)
         self.set_modified_image(output)
 
     def fade(self, distance_threshold: float = 1.5):
@@ -274,7 +277,7 @@ class WordImageRenderer(WordImage):
                             Higher values create more fade
 
         """
-        output = self._fade(self.get_image(), distance_threshold)
+        output = self._fade(self.get_image().copy(), distance_threshold)
         self.set_modified_image(output)
 
     def degrade(self, distance_threshold: float):
@@ -287,11 +290,11 @@ class WordImageRenderer(WordImage):
         """
         # apply smudge or fade to simulate text degradation, if requested
         if distance_threshold > 0:
-            output = self._smudge(self.get_image(), distance_threshold)
+            output = self._smudge(self.get_image().copy(), distance_threshold)
         elif distance_threshold < 0:
-            output = self._fade(self.get_image(), distance_threshold)
+            output = self._fade(self.get_image().copy(), distance_threshold)
         elif distance_threshold == 0:
-            output = self.get_image()
+            output = self.get_image().copy()
 
         self.set_modified_image(output)
 
@@ -327,6 +330,7 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         self.page_number = page_number
         self.word_index = word_index
         self.word = json_parser.get_page(self.page_number).get_word(self.word_index).get_content()
+        self.bounding_box = json_parser.get_page(self.page_number).get_word(self.word_index).get_bounding_box()
 
         self.font_params = font_params
         self.denoise = denoise
@@ -369,6 +373,7 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
                                             centroid=self.centroid)
 
         # get the images
+        self.set_unmodified_rendered_image(self.render_obj.get_image())
         self.set_rendered_image(self.render_obj.get_modified_image())
 
         self._validate_images()
@@ -440,6 +445,12 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
 
         # set the extracted image
         self.extracted_image = extracted_image
+
+    def set_unmodified_rendered_image(self, unmodified_rendered_image: np.ndarray):
+        """
+        Set the unmodified rendered image.
+        """
+        self.unmodified_rendered_image = self._convert_to_binary(unmodified_rendered_image)
 
     def set_rendered_image(self, rendered_image: np.ndarray):
         """
@@ -514,7 +525,7 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         """
         rendered_variant_edge_map = self._extract_edge_map(rendered_variant, self.edge_map_method)
         if not self._has_white_border(rendered_variant):
-            scores = {#"projection_similarity": 0.0,
+            scores = {"projection_similarity": 0.0,
                      "hu_similarity": 0.0,
                      "jaccard_similarity": 0.0,
                      "chamfer_similarity": 0.0}
@@ -533,7 +544,7 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
                                          image2=self.rendered_image, 
                                          image1_edge_map=self.extracted_edge_map, 
                                          image2_edge_map=self.rendered_edge_map)
-        #self.projection_similarity = scores["projection_similarity"]
+        self.projection_similarity = scores["projection_similarity"]
         self.hu_similarity = scores["hu_similarity"]
         self.jaccard_similarity = scores["jaccard_similarity"]
         self.chamfer_similarity = scores["chamfer_similarity"]
@@ -545,7 +556,7 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         Returns:
             dict: A dictionary containing the similarity scores.
         """
-        return {#"projection_similarity": self.projection_similarity, 
+        return {"projection_similarity": self.projection_similarity, 
                 "hu_similarity": self.hu_similarity, 
                 "jaccard_similarity": self.jaccard_similarity, 
                 "chamfer_similarity": self.chamfer_similarity,}
@@ -586,6 +597,9 @@ class Document:
         self.json_loader = parsers.JSONParser(json_path)
         self.pdf_loader = parsers.PDFParser(pdf_path, self.json_loader)
 
+        # process the document to obtain quality scores for each word
+        self._process_document()
+
     def get_pdf_path(self) -> str:
         """
         Get the path to the PDF document.
@@ -620,20 +634,20 @@ class Document:
         """
         return self.pdf_loader
 
-    def process_document(self):
+    def _process_document(self):
         """
         Process the document to obtain quality scores for each word.
 
         Returns:
             list: A list of WordPairProcessor objects.
         """
-        word_list = []
+        words = {}
         num_pages = len(self.json_loader.pages)
         for page_number in range(1, num_pages + 1):
-            print(f"Processing page {page_number} of {num_pages}")
+            logger.info(f"Processing page {page_number} of {num_pages}")
             page_obj = self.json_loader.get_page(page_number)
             for i, word in enumerate(page_obj.get_words()):
-                print(f"Processing word {i} of {len(page_obj.get_words())}")
+                logger.info(f"Processing word {i} of {len(page_obj.get_words())}")
                 word_processor = WordPairProcessor(pdf_parser=self.pdf_loader,
                                                    json_parser=self.json_loader,
                                                    page_number=page_number, 
@@ -643,15 +657,28 @@ class Document:
                                                    edge_map_method='sobel',
                                                    debug=False)
                 word_processor.compute_similarity_scores()
-                word_list.append(word_processor)
-                
-                if i > 10:
-                    break
+
+                if words.get(page_number) is None:
+                    words[page_number] = []
+
+                words[page_number].append(word_processor)
+
             break
+    
+        self.words = words
 
-        return word_list
-
-
+    def get_page(self, page_number: int) -> list[WordPairProcessor]:
+        """
+        Get the words for a given page.
+        """
+        return self.words[page_number]
+    
+    def export_json(self, output_path: str):
+        """
+        Export the document to a JSON file.
+        """
+        raise NotImplementedError("Exporting to JSON is not implemented yet.")
+    
 
 if __name__ == "__main__":
 
@@ -660,4 +687,3 @@ if __name__ == "__main__":
 
 
     document_obj = Document(pdf_path=pdf_path, json_path=json_path)
-    words = document_obj.process_document()
