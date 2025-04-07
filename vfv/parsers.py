@@ -3,6 +3,9 @@ import os
 from typing import Dict, List, Any, Optional, Tuple, Set
 from dataclasses import dataclass, field
 import logging
+import fitz 
+from PIL import Image 
+import numpy as np
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -606,50 +609,83 @@ class JSONParser:
         return self.paragraphs
 
 
-def parse_ocr_json(filepath: str) -> JSONParser:
-    """Parse an OCR JSON file and return an OCRDocument object.
-    
-    Args:
-        filepath: Path to the OCR JSON file
-        
-    Returns:
-        An OCRDocument object containing the parsed data
+
+class PDFParser:
+    """ Loads a PDF document once and extracts word images for all OCR words on each page, 
+    using the bounding boxes provided by the JSONParser. Word images are stored internally 
+    and can be accessed using page and word indices in the same way as in the JSONParser.
     """
-    return JSONParser(filepath)
+    def __init__(self, pdf_path: str, json_parser: JSONParser, target_dpi: int = 144):
+        """ Initialize the loader.
+
+        Args:
+            pdf_path (str): Path to the PDF document.
+            json_parser: A JSONParser instance that has parsed the OCR output.
+        """
+        self.pdf_path = pdf_path
+        self.json_parser = json_parser
+        # Internal storage: {page_number: [word_img0, word_img1, ...]}
+        self.word_images = {}
+        logger.info(f"Loading PDF document from {self.pdf_path}")
+        self._load_pdf_and_extract_word_images()
+        logger.info(f"Successfully loaded PDF document with {len(self.word_images)} pages")
+
+    def _load_pdf_and_extract_word_images(self):
+        """
+        Open the PDF document once, then render each page and extract all word images based
+        on the OCR bounding boxes. Each word image is stored as a NumPy array.
+        """
+        pdf_doc = fitz.open(self.pdf_path)
+        for ocr_page in self.json_parser.pages:
+            logger.info(f"Processing page {ocr_page.page_number}")
+            page_num = ocr_page.page_number  # Assuming OCR pages are 1-indexed.
+            pdf_page = pdf_doc[page_num - 1]  # fitz pages are 0-indexed.
+
+            # Retrieve page info to determine DPI and dimensions.
+            page_info = pdf_page.get_image_info()[0]
+            dpi_x, dpi_y = page_info['xres'], page_info['yres']
+
+            # Convert page dimensions from points to inches (1 inch = 72 points)
+            page_width = page_info['bbox'][2] / 72
+            page_height = page_info['bbox'][3] / 72
+
+            # Render the page using the same matrix as in the single-word extractor.
+            pix = pdf_page.get_pixmap(matrix=fitz.Matrix(dpi_x / 10, dpi_y / 10))
+            page_image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+
+            # Compute scaling factors from OCR coordinates (in inches) to rendered pixels.
+            scale_x = pix.width / page_width if page_width else 1
+            scale_y = pix.height / page_height if page_height else 1
+
+            word_images_on_page = []
+            for word in ocr_page.words:
+                bbox = word.get_bounding_box()  # [x, y, width, height] in inches.
+                x = bbox[0] * scale_x
+                y = bbox[1] * scale_y
+                w = bbox[2] * scale_x
+                h = bbox[3] * scale_y
+                cropped = page_image.crop((x, y, x + w, y + h))
+                cropped_np = np.array(cropped)
+                word_images_on_page.append(cropped_np)
+            self.word_images[page_num] = word_images_on_page
+        pdf_doc.close()
+
+    def get_word_image(self, page_number: int, word_index: int):
+        """
+        Retrieve the word image for the given page and word index.
+
+        Args:
+            page_number (int): The page number (1-indexed, as in the OCR output).
+            word_index (int): The index of the word on that page.
+        
+        Returns:
+            A numpy array of the cropped word image.
+        """
+        if page_number in self.word_images and 0 <= word_index < len(self.word_images[page_number]):
+            return self.word_images[page_number][word_index]
+        else:
+            raise IndexError("Word image not found for page {} at index {}".format(page_number, word_index))
 
 
-if __name__ == "__main__":
-    # Example usage
-    import sys
-    
-    if len(sys.argv) > 1:
-        file_path = sys.argv[1]
-        doc = parse_ocr_json(file_path)
-        print(f"Loaded document with {len(doc.pages)} pages")
-        
-        # Print some basic stats
-        total_words = len(doc.get_all_words())
-        total_lines = len(doc.get_all_lines())
-        total_tables = len(doc.get_all_tables())
-        total_kvps = len(doc.key_value_pairs)
-        total_figures = len(doc.get_all_figures())
-        total_paragraphs = len(doc.get_all_paragraphs())
-        
-        print(f"Total words: {total_words}")
-        print(f"Total lines: {total_lines}")
-        print(f"Total tables: {total_tables}")
-        print(f"Total key-value pairs: {total_kvps}")
-        print(f"Total figures: {total_figures}")
-        print(f"Total paragraphs: {total_paragraphs}")
-        
-        # Example of accessing a key-value pair
-        if doc.key_value_pairs:
-            first_kvp = doc.key_value_pairs[0]
-            print(f"First key-value pair: '{first_kvp.key_text}' -> '{first_kvp.value_text}'")
-            
-        # Example of accessing a table
-        if doc.tables:
-            first_table = doc.tables[0]
-            print(f"First table: {first_table.row_count} rows x {first_table.column_count} columns")
-    else:
-        print("Please provide a path to an OCR JSON file")
+
+
