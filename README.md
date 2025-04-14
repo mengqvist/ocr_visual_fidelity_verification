@@ -7,7 +7,7 @@ Does the OCR output, when re-rendered, visually match the original document? Tra
 
 - **JSON Parsing**: Parse Azure Document Intelligence JSON format maintaining original structure
 - **Quality Verification**: Multiple methods to verify OCR quality without ground truth
-- **Visualization**: Overlay quality indicators on original document
+- **Visualization**: Overlay quality indicators (using the matplotlib plasma colormap) on original document
 
 
 ## Examples
@@ -15,6 +15,13 @@ Does the OCR output, when re-rendered, visually match the original document? Tra
 Here's an example of how the tool visualizes a rendered version that matches a degraded word extracted from the PDF:
 
 ![Example Word Visualization](images/example_word.png)
+
+
+And here is an example of an orginal pdf paragraph with Azure OCR quality scores (top) and the a rendered version of the extracted words with simulated degradation (bottom). Deeper blues indicate low quality scores, pinks intermediate, and yellow high quality scores.
+
+![Extracted Paragraph](images/extracted_paragraph.png)
+
+![Rendered Paragraph](images/rendered_paragraph.png)
 
 
 ## Installation
@@ -107,11 +114,14 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 - **Code Optimization:**  
   Enhance processing speed by refactoring and optimizing the underlying code base, ensuring faster turnaround times for large or multiple document processing.
 
+- **Improved Similarity Metrics:**
+  Improve the way the extracted word and rendered word images are compared. There are currently some instances where the two are clearly different to the human eye, but this is not captured by the similarity scores.
+
 - **Additional Typefaces:**  
   Expand the font library to include more typefaces, catering to various document styles and historical fonts, thereby improving the fidelity of the text rendering process.
 
 - **Font Majority Voting:**  
   Implement a font majority voting mechanism for paragraphs. This will standardize the font selection across each paragraph, promoting consistency in the re-rendered output and further improving verification accuracy.
 
-- **Modeling Typewriter Specificities:**  
+- **Modeling Typewriter Specificities:**
   Incorporate techniques to model the lateral and vertical offset of individual characters (to account for phenomena like bent pins) specific to typewriter outputs. This will capture subtle physical imperfections and further enhance the accuracy of the OCR verification process.
