@@ -1,14 +1,3 @@
-"""Visualization utilities for OCR verification results using new JSON parsing format.
-
-This module provides tools for visualizing OCR results with quality indicators.
-It now relies on the JSONParser from json_parser.py, which uses dataclasses to represent
-the new JSON format (flat lists for polygons, etc.).
-
-Example:
-    visualizer = OCRVisualizer("doc.pdf", "ocr.json")
-    visualizer.render_all_pages("output/", highlight_mode="confidence")
-"""
-
 import os
 import logging
 import numpy as np
@@ -28,14 +17,19 @@ class OCRViewer:
     This class loads a PDF and its associated OCR JSON (parsed via JSONParser),
     and renders pages with overlays based on OCR quality (confidence).
     """
-    def __init__(self, pdf_path: str, json_path: str):
+    def __init__(self, pdf_path: str, json_path: str, dpi: int = 72):
         """
         Args:
             pdf_path: Path to the original PDF file.
-            json_path: Path to the OCR JSON file.
+            json_path: Path to the OCR JSON file.   
+            dpi: DPI for rendering.
         """
         self.pdf_path = pdf_path
         self.json_path = json_path
+        self.dpi = dpi
+
+        self.pages = None
+        self.pixmaps = None
 
         # load pdf and json
         self.document = Document(pdf_path=pdf_path, json_path=json_path)
@@ -48,7 +42,106 @@ class OCRViewer:
              (1, '#009E73')]    # Teal green for high confidence
         )
 
-    def render_page_dual(self, page_number: int, output_path: str, 
+        # load pages and pixmaps
+        self._load_pages()
+
+    def _load_pages(self):
+        """
+        Load a page from the PDF and return a fitz.Pixmap object.
+        """
+        if not self.document:
+            logger.error("PDF or OCR data not loaded")
+            return False
+        
+        self.pdf_pages = []
+        self.pixmaps = []
+
+        for page_number in range(1, len(self.document.get_json_loader().pages) + 1):
+            # Get PDF page and render it as an image
+            self.pdf_pages.append(fitz.open(self.pdf_path)[page_number - 1])
+            self.pixmaps.append(self.pdf_pages[-1].get_pixmap(matrix=fitz.Matrix(150/self.dpi, 150/self.dpi)))
+
+    def _add_quality_rectangle(self, ax, x: float, y: float, width: float, height: float, 
+                            quality: float, highlight_mode: str, 
+                            confidence_threshold: float = 1.0):
+        """
+        Adds a rectangle overlay to the given axis based on the quality score.
+
+        Args:
+            ax: The matplotlib axes object on which to add the rectangle.
+            x: The x-coordinate for the rectangle.
+            y: The y-coordinate for the rectangle.
+            width: The width of the rectangle.
+            height: The height of the rectangle.
+            quality: The quality/confidence score associated with the text.
+            highlight_mode: The mode for highlighting (e.g., 'confidence').
+            confidence_threshold: The threshold below which the overlay is applied.
+            
+        Returns:
+            The matplotlib axes with the rectangle overlay added.
+        """
+        if highlight_mode == 'confidence':
+            if quality < confidence_threshold:
+                color = self.confidence_cmap(quality)
+                alpha = 0.5
+            else:
+                # Do not add an overlay if above threshold
+                return ax
+        else:
+            color = 'blue'
+            alpha = 0.3
+
+        rect = patches.Rectangle((x, y), width, height, linewidth=1, edgecolor=color, facecolor=color, alpha=alpha)
+        ax.add_patch(rect)
+        return ax
+
+    def _add_quality_rectangle_pil(self,image: Image.Image, x: float, y: float, width: float, height: float, 
+                                quality: float, highlight_mode: str, confidence_threshold: float = 1.0,) -> Image.Image:
+        """
+        Adds a quality rectangle overlay to a PIL image based on the quality score.
+        
+        Args:
+            image: The base PIL image onto which the overlay will be applied.
+            x: The x-coordinate of the rectangle.
+            y: The y-coordinate of the rectangle.
+            width: The width of the rectangle.
+            height: The height of the rectangle.
+            quality: The quality (or confidence) score.
+            highlight_mode: Mode for highlighting (e.g., 'confidence').
+            confidence_threshold: Threshold below which the overlay is applied.
+        
+        Returns:
+            A new PIL image with the overlay applied.
+        """
+        # Convert the base image to RGBA if it's not already, so we can work with transparency.
+        base_image = image.convert("RGBA")
+        overlay = Image.new("RGBA", base_image.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay, "RGBA")
+        
+        if highlight_mode == 'confidence':
+            if quality < confidence_threshold:
+                # Use the colormap to get a color, if provided. The colormap returns normalized floats in 0-1.
+                norm_color = self.confidence_cmap(quality)
+                # Convert normalized values to integers in the range 0-255.
+                color = tuple(int(c * 255) for c in norm_color[:3])
+
+                alpha = 128  # Semi-transparent
+            else:
+                # No overlay is added if the quality is above threshold.
+                return image
+        else:
+            color = (0, 0, 255)
+            alpha = 77
+
+        fill_color = color + (alpha,)
+        # Draw the rectangle on the overlay.
+        draw.rectangle([int(x), int(y), int(x + width), int(y + height)], fill=fill_color, outline=fill_color)
+        
+        # Composite the overlay with the base image.
+        combined = Image.alpha_composite(base_image, overlay)
+        return combined.convert("RGB")
+
+    def _render_original_page(self, page_number: int, output_path: str, 
                                  highlight_mode: str = 'confidence',
                                  confidence_threshold: float = 1.0,
                                  dpi: int = 150) -> bool:
@@ -65,17 +158,7 @@ class OCRViewer:
         Returns:
             True if successful, False otherwise.
         """
-        if not self.document:
-            logger.error("PDF or OCR data not loaded")
-            return False
-
-        if page_number < 1 or page_number > len(self.document.get_json_loader().pages):
-            logger.error(f"Invalid page number: {page_number}")
-            return False
-
-        # Get PDF page and render it as an image
-        pdf_page = fitz.open(self.pdf_path)[page_number - 1]
-        pix = pdf_page.get_pixmap(matrix=fitz.Matrix(dpi/72, dpi/72))
+        pix = self.pixmaps[page_number - 1]
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
         # Get OCR page (as parsed by JSONParser)
@@ -106,37 +189,44 @@ class OCRViewer:
             width = word.bounding_box.width * scale_x
             height = word.bounding_box.height * scale_y
 
-            # For confidence mode, highlight words with low confidence
-            if highlight_mode == 'confidence':
-                confidence = word.confidence
-                if confidence < confidence_threshold:
-                    color = self.confidence_cmap(confidence)
-                    alpha = 0.5
-                else:
-                    # Skip high-confidence words for cleaner visualization
-                    continue
-            else:
-                # Default color for any other mode
-                color = 'blue'
-                alpha = 0.3
+            # Add the quality rectangle
+            ax = self._add_quality_rectangle(ax, x, y, width, height, word.confidence, highlight_mode, confidence_threshold)
 
-            rect = patches.Rectangle(
-                (x, y), width, height,
-                linewidth=1, edgecolor=color, facecolor=color, alpha=alpha
-            )
-            ax.add_patch(rect)
 
         plt.tight_layout()
         plt.savefig(output_path, dpi=dpi)
         plt.close(fig)
         logger.info(f"Saved original overlay visualization to {output_path}")
 
+    def _render_extracted_words(self, page_number: int, output_path: str,
+                                highlight_mode: str = 'confidence',
+                                confidence_threshold: float = 1.0,
+                                dpi: int = 150, degradation: bool = True) -> bool:
+        """
+        Render the extracted words with simulated degradation on a blank page.
 
+        Args:
+            page_number: Page number to render (1-based).
+            output_path: Path to save the output image.
+            dpi: DPI for rendering.
+            degradation: Whether to simulate degradation.
+        """
 
         ### Render Image 2: Blank page with rendered words and similarity scores
         # Create a blank white canvas
+        pix = self.pixmaps[page_number - 1]
         rendered_canvas = Image.new("RGB", (pix.width, pix.height), "white")
         draw = ImageDraw.Draw(rendered_canvas)
+
+        # Get OCR page (as parsed by JSONParser)
+        ocr_page = self.document.get_json_loader().get_page(page_number)
+        if not ocr_page:
+            logger.error(f"OCR data not found for page {page_number}")
+            return False
+
+        # Compute scaling factors from OCR coordinates to image pixels
+        scale_x = pix.width / ocr_page.width if ocr_page.width else 1
+        scale_y = pix.height / ocr_page.height if ocr_page.height else 1
 
         # Process each word on the page and overlay the rendered word image with similarity score
         for i, word_pair in enumerate(self.document.get_page(page_number)):
@@ -148,28 +238,13 @@ class OCRViewer:
             width = int(bounding_box_width * scale_x)
             height = int(bounding_box_height * scale_y)
 
-            image = word_pair.render_obj.get_modified_image()
-
-               
-            # # replace white pixels with the color corresponding to the confidence score drawn from the color map
-            # if highlight_mode == 'confidence':
-            #     confidence = word.confidence
-            #     if confidence < confidence_threshold:
-            #         color = self.confidence_cmap(confidence)
-            #         alpha = 0.5
-            #     else:
-            #         # Skip high-confidence words for cleaner visualization
-            #         continue
-            # else:
-            #     # Default color for any other mode
-            #     color = (0, 0, 255)
-            #     alpha = 0.3
-
-            # mask = np.all(image == 255, axis=-1)
-            # image[mask] = color
-
             # Convert numpy array to PIL Image
+            if degradation:
+                image = word_pair.render_obj.get_modified_image()
+            else:
+                image = word_pair.render_obj.get_image()
             image = Image.fromarray(image)
+
             # Convert to RGB if grayscale
             if image.mode != 'RGB':
                 image = image.convert('RGB')
@@ -180,43 +255,12 @@ class OCRViewer:
             # Paste using only the upper-left corner, since the image now has the correct size
             rendered_canvas.paste(image, (x, y))
 
-        rendered_output_path = os.path.join('images', f"page_{page_number:03d}_rendered_degraded.png")
-        rendered_canvas.save(rendered_output_path)
-        logger.info(f"Saved rendered words overlay visualization to {rendered_output_path}")
+            # Add the quality rectangle
+            confidence = word_pair.get_mean_similarity_score()
+            rendered_canvas = self._add_quality_rectangle_pil(rendered_canvas, x, y, width, height, confidence, highlight_mode, confidence_threshold)
 
-
-        ### Also render the unmodified rendered word image
-        rendered_canvas = Image.new("RGB", (pix.width, pix.height), "white")
-        draw = ImageDraw.Draw(rendered_canvas)
-
-        # Process each word on the page and overlay the rendered word image with similarity score
-        for i, word_pair in enumerate(self.document.get_page(page_number)):
-
-            # Scale bounding box coordinates
-            bounding_box_x, bounding_box_y, bounding_box_width, bounding_box_height = word_pair.bounding_box
-            x = int(bounding_box_x * scale_x)
-            y = int(bounding_box_y * scale_y)
-            width = int(bounding_box_width * scale_x)
-            height = int(bounding_box_height * scale_y)
-
-            image = word_pair.render_obj.get_image()
-
-            # Convert numpy array to PIL Image
-            image = Image.fromarray(image)
-            # Convert to RGB if grayscale
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-
-            # Resize the rendered word image to match the bounding box dimensions
-            image = image.resize((width, height))
-
-            # Paste using only the upper-left corner, since the image now has the correct size
-            rendered_canvas.paste(image, (x, y))
-
-        rendered_output_path = os.path.join('images', f"page_{page_number:03d}_rendered.png")
-        rendered_canvas.save(rendered_output_path)
-        logger.info(f"Saved rendered words overlay visualization to {rendered_output_path}")
-
+        rendered_canvas.save(output_path)
+        logger.info(f"Saved rendered words overlay visualization to {output_path}")
 
     def render_all_pages(self, output_dir: str, 
                          highlight_mode: str = 'confidence',
@@ -230,108 +274,31 @@ class OCRViewer:
             highlight_mode: Mode for highlights ('confidence').
             confidence_threshold: Threshold for confidence highlighting.
             dpi: DPI for rendering.
-
-        Returns:
-            List of paths to output images.
         """
 
         os.makedirs(output_dir, exist_ok=True)
-        output_paths = []
 
         for page_num in range(1, len(self.document.get_json_loader().pages) + 1):
             if page_num != 1:
                 continue
-            output_path = os.path.join(output_dir, f"page_{page_num:03d}.png")
-            success = self.render_page_dual(
+
+            # Render original page
+            output_path = os.path.join(output_dir, f"page_{page_num:03d}_original.png")
+            self._render_original_page(
                 page_num, output_path, highlight_mode, confidence_threshold, dpi
             )
-            if success:
-                output_paths.append(output_path)
-        return output_paths
 
-    def create_quality_heatmap(self, page_number: int, output_path: str,
-                               resolution: tuple = (1000, 1500)) -> bool:
-        """
-        Create a heatmap visualization of OCR quality for a given page.
+            # Render extracted words
+            output_path = os.path.join(output_dir, f"page_{page_num:03d}_rendered.png")
+            self._render_extracted_words(
+                page_num, output_path, highlight_mode, confidence_threshold, dpi, degradation=False
+            )
 
-        Args:
-            page_number: Page number to visualize (1-based).
-            output_path: Path to save the heatmap image.
-            resolution: Resolution of the heatmap as (width, height).
-
-        Returns:
-            True if successful, False otherwise.
-        """
-        if not self.ocr_parser:
-            logger.error("OCR data not loaded")
-            return False
-
-        try:
-            ocr_page = self.ocr_parser.get_page(page_number)
-            if not ocr_page:
-                logger.error(f"OCR data not found for page {page_number}")
-                return False
-
-            width_res, height_res = resolution
-            # Create an empty heatmap array; initialize with ones (high confidence)
-            heatmap = np.ones((height_res, width_res), dtype=float)
-
-            # Scale factors from OCR coordinates to heatmap resolution
-            scale_x = width_res / ocr_page.width if ocr_page.width else 1
-            scale_y = height_res / ocr_page.height if ocr_page.height else 1
-
-            for word in ocr_page.words:
-                if not word.bounding_box:
-                    continue
-                # Get scaled bounding box coordinates
-                x_min = int(word.bounding_box.x * scale_x)
-                y_min = int(word.bounding_box.y * scale_y)
-                x_max = int((word.bounding_box.x + word.bounding_box.width) * scale_x)
-                y_max = int((word.bounding_box.y + word.bounding_box.height) * scale_y)
-
-                # Clip coordinates to heatmap dimensions
-                x_min = max(0, min(x_min, width_res - 1))
-                y_min = max(0, min(y_min, height_res - 1))
-                x_max = max(0, min(x_max, width_res - 1))
-                y_max = max(0, min(y_max, height_res - 1))
-
-                # Fill the region with the word's confidence
-                heatmap[y_min:y_max+1, x_min:x_max+1] = word.confidence
-
-            fig, ax = plt.subplots(figsize=(10, 15))
-            im = ax.imshow(heatmap, cmap=self.confidence_cmap, vmin=0, vmax=1)
-            ax.axis('off')
-            plt.title(f"OCR Quality Heatmap - Page {page_number}")
-            cbar = plt.colorbar(im, ax=ax)
-            cbar.set_label('OCR Confidence')
-            plt.tight_layout()
-            plt.savefig(output_path, dpi=150)
-            plt.close(fig)
-            logger.info(f"Saved heatmap to {output_path}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error creating heatmap for page {page_number}: {e}")
-            return False
-
-
-def create_overlay_visualization(pdf_path: str, json_path: str, output_dir: str,
-                                 highlight_mode: str = 'confidence') -> list:
-    """
-    Convenience function to create overlay visualizations for all pages.
-
-    Args:
-        pdf_path: Path to the PDF file.
-        json_path: Path to the OCR JSON file.
-        output_dir: Directory to save output images.
-        highlight_mode: Mode for highlights ('confidence').
-
-    Returns:
-        List of paths to output images.
-    """
-    visualizer = OCRViewer(pdf_path, json_path)
-    return visualizer.render_all_pages(output_dir, highlight_mode)
-
+            # Render degraded words
+            output_path = os.path.join(output_dir, f"page_{page_num:03d}_rendered_degraded.png")
+            self._render_extracted_words(
+                page_num, output_path, highlight_mode, confidence_threshold, dpi, degradation=True
+            )
 
 if __name__ == "__main__":
     import sys
@@ -344,7 +311,6 @@ if __name__ == "__main__":
     parser.add_argument('--threshold', type=float, default=1.0, help='Confidence threshold')
     parser.add_argument('--mode', choices=['confidence'], default='confidence', help='Highlighting mode')
     parser.add_argument('--page', type=int, help='Specific page to visualize (optional)')
-    parser.add_argument('--heatmap', action='store_true', help='Create heatmap visualization')
 
     args = parser.parse_args()
 
@@ -354,12 +320,7 @@ if __name__ == "__main__":
     if args.page:
         output_path = os.path.join(args.output, f"page_{args.page:03d}.png")
         visualizer.render_page_with_overlay(args.page, output_path, args.mode, confidence_threshold=args.threshold)
-        if args.heatmap:
-            heatmap_path = os.path.join(args.output, f"heatmap_page_{args.page:03d}.png")
-            visualizer.create_quality_heatmap(args.page, heatmap_path)
+
     else:
         visualizer.render_all_pages(args.output, args.mode, confidence_threshold=args.threshold)
-        if args.heatmap:
-            for page_num in range(1, len(visualizer.document.get_json_loader().pages) + 1):
-                heatmap_path = os.path.join(args.output, f"heatmap_page_{page_num:03d}.png")
-                visualizer.create_quality_heatmap(page_num, heatmap_path)
+
