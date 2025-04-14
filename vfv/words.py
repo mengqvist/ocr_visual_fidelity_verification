@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from vfv import parsers
 from PIL import Image, ImageDraw, ImageFont
 import os
+import json
 from dotenv import load_dotenv, find_dotenv
 from vfv.algorithms import ImageSimilarityAlgorithms, ImageColorAlgorithms, ImageDegradationAlgorithms
 from config import TYPEFACE_PATHS
@@ -157,7 +158,6 @@ class WordImageRenderer(WordImage):
         self.width = width
         self.height = height
         self.centroid = centroid
-        self.is_crop_good = None
 
         # text parameters
         self.font_size = font_size
@@ -237,12 +237,7 @@ class WordImageRenderer(WordImage):
             degraded_np = self._convert_to_binary(rendered_np)
 
         # Step 3: Calculate the center of mass from the rendered image.
-        # Convert to grayscale for the centroid calculation.
-        rendered_gray = self._convert_to_grayscale(degraded_np)  # convert to grayscale
         rendered_x, rendered_y = self._calculate_centroid(degraded_np)  # returns (x, y)
-
-        # calculate number of black pixels
-        num_black_pixels = np.sum(degraded_np == 0)
 
         # Step 4: Compute crop coordinates so that the rendered centroid aligns with self.centroid.
         if self.centroid is None:
@@ -261,9 +256,6 @@ class WordImageRenderer(WordImage):
         # Crop both versions using the same coordinates.
         cropped_unmodified = unmodified_np[crop_y:crop_y + self.height, crop_x:crop_x + self.width]
         cropped_degraded = degraded_np[crop_y:crop_y + self.height, crop_x:crop_x + self.width]
-        
-        # calculate number of black pixels in the cropped image
-        num_black_pixels_cropped = np.sum(cropped_degraded == 0)
 
         # Ensure binary conversion if needed.
         clean = self._convert_to_binary(cropped_unmodified)
@@ -271,14 +263,7 @@ class WordImageRenderer(WordImage):
         
         # Save them separately:
         self.set_image(clean)                # unsmudged, original rendered image
-        self.set_modified_image(degraded)      # degraded (smudged/faded) image
-
-        if num_black_pixels_cropped < num_black_pixels:
-            self.is_crop_good = False
-        else:
-            self.is_crop_good = True
-
-        
+        self.set_modified_image(degraded)      # degraded (smudged/faded) image 
 
     def smudge(self, distance_threshold: float = 1.5):
         """
@@ -425,14 +410,10 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
                     centroid=self.centroid
                 )
                 # Cache the baseline rendered image.
-                base_rendered = self._convert_to_binary(temp_renderer.get_modified_image().copy())
+                base_rendered = self._convert_to_binary(temp_renderer.get_image().copy())
 
                 # discard if the baseline image has no white border
                 if best_score != -1 and not self._has_white_border(base_rendered):
-                    continue
-
-                # discard if baseline image has black pixels removed during the cropping
-                if best_score != -1 and not temp_renderer.is_crop_good:
                     continue
                 
                 # Loop over degradation thresholds.
@@ -450,7 +431,7 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
                     similarity_score = np.mean(list(scores.values()))
 
                     # Update best parameters if the score is higher.
-                    if similarity_score > best_score:
+                    if similarity_score > best_score or best_params is None:
                         best_score = similarity_score
                         best_params = {
                             "typeface": typeface,
@@ -676,7 +657,7 @@ class Document:
             logger.info(f"Processing page {page_number} of {num_pages}")
             page_obj = self.json_loader.get_page(page_number)
             for i, word in enumerate(page_obj.get_words()):
-                logger.info(f"Processing word {i} of {len(page_obj.get_words())}")
+                logger.info(f"Processing word {i} of {len(page_obj.get_words())} on page {page_number}")
                 word_processor = WordPairProcessor(pdf_parser=self.pdf_loader,
                                                    json_parser=self.json_loader,
                                                    page_number=page_number, 
@@ -691,7 +672,7 @@ class Document:
                     words[page_number] = []
 
                 words[page_number].append(word_processor)
-                if i > 70:
+                if i > 10:
                     break
             break
     
@@ -706,5 +687,33 @@ class Document:
     def export_json(self, output_path: str):
         """
         Export the document to a JSON file.
+
+        Each page is stored with an array of words, where each word is saved with its text content,
+        bounding box (as [x, y, width, height]), quality score, and detailed similarity scores.
+
+        Args:
+            output_path (str): The file path where the JSON will be saved.
         """
-        raise NotImplementedError("Exporting to JSON is not implemented yet.")
+        export_data = {"pages": {}}
+
+        # Iterate over each page in the document
+        for page_number, word_processors in self.words.items():
+            # Use string keys for pages to mimic typical JSON formats.
+            export_data["pages"][str(page_number)] = []
+
+            # Iterate over each word processor for this page.
+            for word_index, wp in enumerate(word_processors):
+                word_info = {
+                    "word_index": word_index,
+                    "text": wp.word,
+                    # Convert bounding_box to a list [x, y, width, height] (if available).
+                    "bounding_box": wp.bounding_box if wp.bounding_box else None,
+                    "quality_score": wp.get_mean_similarity_score(),
+                    "similarity_scores": wp.get_similarity_scores()
+                }
+                export_data["pages"][str(page_number)].append(word_info)
+
+        # Write the JSON file.
+        with open(output_path, "w") as outfile:
+            json.dump(export_data, outfile, indent=2)
+        logger.info(f"Exported quality data to JSON file at: {output_path}")
