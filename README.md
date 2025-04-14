@@ -21,7 +21,7 @@ And here is an example of an orginal pdf paragraph with Azure OCR quality scores
 
 ![Extracted Paragraph](images/extracted_paragraph.png)
 
-![Rendered Paragraph](images/rendered_degraded_paragraph.png)
+![Rendered Degraded Paragraph](images/rendered_degraded_paragraph.png)
 
 ![Rendered Paragraph](images/rendered_paragraph.png)
 
