@@ -2,6 +2,11 @@
 data/*
 !data/README.md
 
+# Images
+images/*
+!images/README.md
+!images/example_word.png
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
