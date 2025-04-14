@@ -157,6 +157,7 @@ class WordImageRenderer(WordImage):
         self.width = width
         self.height = height
         self.centroid = centroid
+        self.is_crop_good = None
 
         # text parameters
         self.font_size = font_size
@@ -224,18 +225,24 @@ class WordImageRenderer(WordImage):
         draw.text(canvas_center, self.word, fill='black', font=font, anchor='mm')
         rendered_np = self._convert_to_binary(np.array(rendered_img))
 
+        # Save a copy of the unmodified rendered image.
+        unmodified_np = rendered_np.copy()
+
         # apply smudge or fade to simulate text degradation, if requested
         if self.smudge_distance > 0:
-            rendered_np = self._smudge(rendered_np, self.smudge_distance)
+            degraded_np = self._smudge(rendered_np, self.smudge_distance)
         elif self.smudge_distance < 0:
-            rendered_np = self._fade(rendered_np, self.smudge_distance)
+            degraded_np = self._fade(rendered_np, self.smudge_distance)
         else:
-            rendered_np = self._convert_to_binary(rendered_np)
+            degraded_np = self._convert_to_binary(rendered_np)
 
         # Step 3: Calculate the center of mass from the rendered image.
         # Convert to grayscale for the centroid calculation.
-        rendered_gray = self._convert_to_grayscale(rendered_np)  # convert to grayscale
-        rendered_x, rendered_y = self._calculate_centroid(rendered_gray)  # returns (x, y)
+        rendered_gray = self._convert_to_grayscale(degraded_np)  # convert to grayscale
+        rendered_x, rendered_y = self._calculate_centroid(degraded_np)  # returns (x, y)
+
+        # calculate number of black pixels
+        num_black_pixels = np.sum(degraded_np == 0)
 
         # Step 4: Compute crop coordinates so that the rendered centroid aligns with self.centroid.
         if self.centroid is None:
@@ -250,12 +257,28 @@ class WordImageRenderer(WordImage):
         # Ensure the crop stays within the canvas boundaries.
         crop_x = max(0, min(crop_x, canvas_width - self.width))
         crop_y = max(0, min(crop_y, canvas_height - self.height))
+            
+        # Crop both versions using the same coordinates.
+        cropped_unmodified = unmodified_np[crop_y:crop_y + self.height, crop_x:crop_x + self.width]
+        cropped_degraded = degraded_np[crop_y:crop_y + self.height, crop_x:crop_x + self.width]
         
-        cropped_img = rendered_np[crop_y:crop_y + self.height, crop_x:crop_x + self.width]
-        
-        binary = self._convert_to_binary(cropped_img)
+        # calculate number of black pixels in the cropped image
+        num_black_pixels_cropped = np.sum(cropped_degraded == 0)
 
-        self.set_image(binary)
+        # Ensure binary conversion if needed.
+        clean = self._convert_to_binary(cropped_unmodified)
+        degraded = self._convert_to_binary(cropped_degraded)
+        
+        # Save them separately:
+        self.set_image(clean)                # unsmudged, original rendered image
+        self.set_modified_image(degraded)      # degraded (smudged/faded) image
+
+        if num_black_pixels_cropped < num_black_pixels:
+            self.is_crop_good = False
+        else:
+            self.is_crop_good = True
+
+        
 
     def smudge(self, distance_threshold: float = 1.5):
         """
@@ -390,7 +413,7 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         width = self.extract_obj.get_width()
         height = self.extract_obj.get_height()
         for typeface in TYPEFACE_PATHS.keys():
-            for fontsize in range(int(height - 12), int(height), 1):
+            for fontsize in range(int(height - 40), int(height), 2):
                 # Render the word once with no degradation.
                 temp_renderer = WordImageRenderer(
                     word=self.word,
@@ -407,9 +430,13 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
                 # discard if the baseline image has no white border
                 if best_score != -1 and not self._has_white_border(base_rendered):
                     continue
+
+                # discard if baseline image has black pixels removed during the cropping
+                if best_score != -1 and not temp_renderer.is_crop_good:
+                    continue
                 
                 # Loop over degradation thresholds.
-                for degradation_threshold in range(-3, 10):
+                for degradation_threshold in range(-2, 9):
                     # Apply degradation on the baseline image directly.
                     if degradation_threshold > 0:
                         rendered_variant = self._smudge(base_rendered, degradation_threshold)
@@ -528,7 +555,8 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
             scores = {"projection_similarity": 0.0,
                      "hu_similarity": 0.0,
                      "jaccard_similarity": 0.0,
-                     "chamfer_similarity": 0.0}
+                     "chamfer_similarity": 0.0,
+                     "black_pixel_similarity": 0.0}
         else:
             scores = self._compute_similarity(image1=self.extracted_image, 
                                              image2=rendered_variant, 
@@ -548,6 +576,7 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         self.hu_similarity = scores["hu_similarity"]
         self.jaccard_similarity = scores["jaccard_similarity"]
         self.chamfer_similarity = scores["chamfer_similarity"]
+        self.black_pixel_similarity = scores["black_pixel_similarity"]
 
     def get_similarity_scores(self) -> dict:
         """
@@ -559,8 +588,8 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         return {"projection_similarity": self.projection_similarity, 
                 "hu_similarity": self.hu_similarity, 
                 "jaccard_similarity": self.jaccard_similarity, 
-                "chamfer_similarity": self.chamfer_similarity,}
-            # "chamfer_dispersion_similarity": self.chamfer_dispersion_similarity}
+                "chamfer_similarity": self.chamfer_similarity,
+                "black_pixel_similarity": self.black_pixel_similarity}
 
     def get_mean_similarity_score(self) -> float:
         """
@@ -662,7 +691,8 @@ class Document:
                     words[page_number] = []
 
                 words[page_number].append(word_processor)
-
+                if i > 70:
+                    break
             break
     
         self.words = words
@@ -678,12 +708,3 @@ class Document:
         Export the document to a JSON file.
         """
         raise NotImplementedError("Exporting to JSON is not implemented yet.")
-    
-
-if __name__ == "__main__":
-
-    pdf_path = "data/pdfs/24492351__AMERICAS__Costa-Rica__WELL-LOG__MUDLOGGING__3.43237209320068359375__.pdf"
-    json_path = "data/raw_json/24492351__AMERICAS__Costa-Rica__WELL-LOG__MUDLOGGING__3.43237209320068359375__.pdf.ocr.json"
-
-
-    document_obj = Document(pdf_path=pdf_path, json_path=json_path)
