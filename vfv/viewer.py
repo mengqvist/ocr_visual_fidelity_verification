@@ -273,8 +273,6 @@ class OCRViewer:
         os.makedirs(output_dir, exist_ok=True)
 
         for page_num in range(1, len(self.document.get_json_loader().pages) + 1):
-            if page_num != 1:
-                continue
 
             # Render original page
             output_path = os.path.join(output_dir, f"page_{page_num:03d}_original.png")
@@ -294,6 +292,12 @@ class OCRViewer:
                 page_num, output_path, highlight_mode, confidence_threshold, dpi, degradation=True
             )
 
+    def export_json(self, output_path: str):
+        """
+        Export the OCR verification results to a JSON file.
+        """
+        self.document.export_json(output_path)
+
 if __name__ == "__main__":
     import sys
     import argparse
@@ -304,17 +308,12 @@ if __name__ == "__main__":
     parser.add_argument('--output', required=True, help='Output directory')
     parser.add_argument('--threshold', type=float, default=1.0, help='Confidence threshold')
     parser.add_argument('--mode', choices=['confidence'], default='confidence', help='Highlighting mode')
-    parser.add_argument('--page', type=int, help='Specific page to visualize (optional)')
 
     args = parser.parse_args()
 
     visualizer = OCRViewer(args.pdf, args.json)
     os.makedirs(args.output, exist_ok=True)
 
-    if args.page:
-        output_path = os.path.join(args.output, f"page_{args.page:03d}.png")
-        visualizer.render_page_with_overlay(args.page, output_path, args.mode, confidence_threshold=args.threshold)
-
-    else:
-        visualizer.render_all_pages(args.output, args.mode, confidence_threshold=args.threshold)
+    visualizer.render_all_pages(args.output, args.mode, confidence_threshold=args.threshold)
+    visualizer.export_json(os.path.join(args.output, 'results.json'))
 

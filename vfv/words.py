@@ -672,9 +672,6 @@ class Document:
                     words[page_number] = []
 
                 words[page_number].append(word_processor)
-                if i > 10:
-                    break
-            break
     
         self.words = words
 
