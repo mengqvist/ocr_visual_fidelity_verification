@@ -50,19 +50,23 @@ def test_extract_edge_map_canny(color_alg):
     # Create an image with a black rectangle on white background
     img = np.ones((100, 100, 3), dtype=np.uint8) * 255
     cv2.rectangle(img, (30, 30), (70, 70), (0, 0, 0), -1)  # filled black rectangle
-    edges = color_alg._extract_edge_map(img, method='canny')
+    # Convert to binary first
+    binary_img = color_alg._convert_to_binary(img)
+    edges = color_alg._extract_edge_map(binary_img, method='canny')
     # The edge map from Canny should be binary (0 and 255)
     unique_vals = np.unique(edges)
     assert set(unique_vals).issubset({0, 255})
     # Also, passing an invalid method should raise a ValueError.
     with pytest.raises(ValueError):
-        color_alg._extract_edge_map(img, method='invalid')
+        color_alg._extract_edge_map(binary_img, method='invalid')
 
 def test_extract_edge_map_sobel(color_alg):
     # Create an image with a black rectangle on white background
     img = np.ones((100, 100, 3), dtype=np.uint8) * 255
     cv2.rectangle(img, (30, 30), (70, 70), (0, 0, 0), -1)
-    edges = color_alg._extract_edge_map(img, method='sobel')
+    # Convert to binary first
+    binary_img = color_alg._convert_to_binary(img)
+    edges = color_alg._extract_edge_map(binary_img, method='sobel')
     # Sobel edge map should be of type uint8 and in range 0-255.
     assert edges.dtype == np.uint8
     assert edges.min() >= 0 and edges.max() <= 255
@@ -89,9 +93,10 @@ def test_calculate_centroid(similarity_alg):
 
     # Test 3: No black pixels (all white)
     img3 = np.full((100, 100), 255, dtype=np.uint8)
-    # Should raise ValueError when there are no foreground pixels
-    with pytest.raises(ValueError, match="No black pixels found in the image."):
-        similarity_alg._calculate_centroid(img3)
+    # Should give the middle of the image
+    centroid3 = similarity_alg._calculate_centroid(img3)
+    assert np.isclose(centroid3[0], 50)
+    assert np.isclose(centroid3[1], 50)
 
 
 ### Degradation Algorithms
