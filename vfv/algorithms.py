@@ -477,7 +477,6 @@ class ImageSimilarityAlgorithms(ImageDegradationAlgorithms):
         # Map coefficient of variation to a similarity between 0 and 1.
         return float(similarity)
 
-
     def _jaccard_similarity(self, binary1: np.ndarray, binary2: np.ndarray) -> float:
         """
         Computes the Jaccard similarity between two binary images.
@@ -501,7 +500,6 @@ class ImageSimilarityAlgorithms(ImageDegradationAlgorithms):
         
         return float(intersection / union)
     
-
     def _black_pixel_similarity(self, binary1: np.ndarray, binary2: np.ndarray) -> float:
         """
         Computes the black pixel similarity between two binary images.
@@ -513,9 +511,14 @@ class ImageSimilarityAlgorithms(ImageDegradationAlgorithms):
         Returns:
             float: Black pixel similarity score between 0 and 1.
         """
-        return float(np.sum(binary1 == 0) / np.sum(binary2 == 0))
+        sum1 = np.sum(binary1 == 0)
+        sum2 = np.sum(binary2 == 0)
+        if sum1 == 0 or sum2 == 0:
+            return 0.0
+        else:
+            return float(min(sum1, sum2) / max(sum1, sum2))
 
-    def _has_white_border(self, image: np.ndarray, border_width: int = 4) -> bool:
+    def _has_white_border(self, image: np.ndarray, border_width: int = 1) -> bool:
         """
         Check that the image has a white border of given width all around.
         
@@ -559,6 +562,7 @@ class ImageSimilarityAlgorithms(ImageDegradationAlgorithms):
         projection_similarity = self._projection_histogram_similarity(image1, image2, projection_bin_width)
         hu_similarity = self._hu_similarity(image1, image2)
         jaccard_similarity = self._jaccard_similarity(image1, image2)
+        black_pixel_similarity = self._black_pixel_similarity(image1, image2)
 
         # Metrics on extracted edges
         chamfer_similarity = self._robust_chamfer_similarity(image1_edge_map, image2_edge_map)
@@ -566,4 +570,5 @@ class ImageSimilarityAlgorithms(ImageDegradationAlgorithms):
         return {"projection_similarity": projection_similarity, 
                 "hu_similarity": hu_similarity, 
                 "jaccard_similarity": jaccard_similarity, 
-                "chamfer_similarity": chamfer_similarity}
+                "chamfer_similarity": chamfer_similarity,
+                "black_pixel_similarity": black_pixel_similarity}
