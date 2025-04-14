@@ -375,7 +375,6 @@ class ImageSimilarityAlgorithms(ImageDegradationAlgorithms):
         """
         Computes the projection histogram similarity between two images.
         The similarity is defined as the average of the wasserstein similarities between the projection histograms.
-        Return 0 if the first and last bins of the histogram contain anything but white pixels, because I want to have white space at the edges.
 
         Args:
             image1 (numpy.ndarray): First image.
@@ -387,10 +386,7 @@ class ImageSimilarityAlgorithms(ImageDegradationAlgorithms):
         """
         hist1_vertical, hist1_horizontal = self._projection_histogram(image1, bin_width=bin_width)
         hist2_vertical, hist2_horizontal = self._projection_histogram(image2, bin_width=bin_width)
-        if np.sum(hist1_vertical[0]) != 0 or np.sum(hist1_vertical[-1]) != 0 or np.sum(hist2_vertical[0]) != 0 or np.sum(hist2_vertical[-1]) != 0:
-            return 0.0
-        else:
-            return float((self._wasserstein_similarity(hist1_vertical, hist2_vertical) + self._wasserstein_similarity(hist1_horizontal, hist2_horizontal)) / 2)
+        return float((self._wasserstein_similarity(hist1_vertical, hist2_vertical) + self._wasserstein_similarity(hist1_horizontal, hist2_horizontal)) / 2)
 
     def _robust_chamfer_similarity(self, binary1: np.ndarray, binary2: np.ndarray, percentile: int = 95, alpha: float = 10) -> float:
         """
