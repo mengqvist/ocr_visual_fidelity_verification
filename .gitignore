@@ -8,6 +8,7 @@ images/*
 !images/example_word.png
 !images/extracted_paragraph.png
 !images/rendered_paragraph.png
+!images/rendered_degraded_paragraph.png
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

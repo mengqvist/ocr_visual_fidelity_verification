@@ -17,12 +17,13 @@ Here's an example of how the tool visualizes a rendered version that matches a d
 ![Example Word Visualization](images/example_word.png)
 
 
-And here is an example of an orginal pdf paragraph with Azure OCR quality scores (top) and the a rendered version of the extracted words with simulated degradation (bottom). Deeper blues indicate low quality scores, pinks intermediate, and yellow high quality scores.
+And here is an example of an orginal pdf paragraph with Azure OCR quality scores (top), the a rendered version of the extracted words with simulated degradation (middle), the rendered version of the extracted text _without_ degradation (bottom). Note that the rendered words are those obtained from the Azure OCR pipeline. Deeper blues indicate low quality scores, pinks intermediate, and yellow high quality scores.
 
 ![Extracted Paragraph](images/extracted_paragraph.png)
 
-![Rendered Paragraph](images/rendered_paragraph.png)
+![Rendered Paragraph](images/rendered_degraded_paragraph.png)
 
+![Rendered Paragraph](images/rendered_paragraph.png)
 
 ## Installation
 
