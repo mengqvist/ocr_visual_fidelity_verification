@@ -3,7 +3,7 @@ import logging
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import LinearSegmentedColormap, ListedColormap
 from PIL import Image, ImageDraw
 import fitz  # PyMuPDF for PDF processing
 from vfv.words import Document
@@ -33,14 +33,7 @@ class OCRViewer:
 
         # load pdf and json
         self.document = Document(pdf_path=pdf_path, json_path=json_path)
-
-        # Create colormap for confidence scores using colorblind-friendly colors.
-        self.confidence_cmap = LinearSegmentedColormap.from_list(
-            'confidence',
-            [(0, '#D55E00'),    # Dark orange for low confidence
-             (0.5, '#56B4E9'),  # Light blue for medium confidence  
-             (1, '#009E73')]    # Teal green for high confidence
-        )
+        self.confidence_cmap = plt.cm.plasma
 
         # load pages and pixmaps
         self._load_pages()
@@ -255,8 +248,9 @@ class OCRViewer:
             # Paste using only the upper-left corner, since the image now has the correct size
             rendered_canvas.paste(image, (x, y))
 
-            # Add the quality rectangle
-            confidence = word_pair.get_mean_similarity_score()
+            # Add the quality rectangle (use only chamfer similarity and jaccard similarity)
+            confidence_scores = word_pair.get_similarity_scores()
+            confidence = (confidence_scores['chamfer_similarity'] + confidence_scores['jaccard_similarity']) / 2
             rendered_canvas = self._add_quality_rectangle_pil(rendered_canvas, x, y, width, height, confidence, highlight_mode, confidence_threshold)
 
         rendered_canvas.save(output_path)
