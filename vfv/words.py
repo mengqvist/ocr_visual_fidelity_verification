@@ -398,7 +398,7 @@ class WordPairProcessor(ImageSimilarityAlgorithms):
         width = self.extract_obj.get_width()
         height = self.extract_obj.get_height()
         for typeface in TYPEFACE_PATHS.keys():
-            for fontsize in range(int(height - 40), int(height), 2):
+            for fontsize in range(max(1, int(height - 40)), max(1, int(height)), 2):
                 # Render the word once with no degradation.
                 temp_renderer = WordImageRenderer(
                     word=self.word,
